@@ -1,0 +1,7 @@
+# written by the engine when it loads the mod from a folder
+.claude-plugin/types/
+nokta/.claude-plugin/types/
+# render pipeline scratch
+tools/nokta-render/out/
+__pycache__/
+*.pyc
