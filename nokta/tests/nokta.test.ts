@@ -3,13 +3,14 @@ import type { MockClock } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { NoktaJob, NoktaLook, NoktaMood, NoktaStep, NoktaTodo } from '../types'
-import { avatarSvg, b64decode, b64encode, rasterCells } from '../hooks/art'
+import { avatarSvg, b64decode, b64encode, heroSvg, rasterCells } from '../hooks/art'
 import {
   DEFAULT_LOOK,
   MOOD,
   describeTool,
   fmtDuration,
   fold,
+  groupSteps,
   iconKey,
   normalizeLook,
   parseAccessory,
@@ -222,6 +223,45 @@ describe('the pure parts', () => {
     expect(titleOf('\n\n  ilk satır burada\nikinci')).toBe('ilk satır burada')
   })
 
+  test('a tool call is described the same on every system, and any tool says what it was pointed at', () => {
+    expect(describeTool('Read', { file_path: 'C:\\Users\\Ali Efe\\AppData\\Temp\\notes.md' })).toBe('Read: notes.md')
+    expect(describeTool('PowerShell', { command: 'Get-ChildItem' })).toBe('PowerShell: Get-ChildItem')
+    expect(describeTool('Monitor', { command: 'tail -f log' })).toBe('Monitor: tail -f log')
+    expect(describeTool('Schedule', {})).toBe('Schedule')
+  })
+
+  test('steps that say the same thing fold into one', () => {
+    expect(
+      groupSteps([
+        { label: 'PowerShell', status: 'ok' as const },
+        { label: 'PowerShell', status: 'err' as const },
+        { label: 'Read: a.ts', status: 'ok' as const },
+        { label: 'Read: a.ts', status: 'run' as const },
+      ]),
+    ).toEqual([
+      { label: 'PowerShell', status: 'err', count: 2 },
+      { label: 'Read: a.ts', status: 'run', count: 2 },
+    ])
+  })
+
+  test('the hero card fits the surface\'s size limit, giving up the blink and then the picture', () => {
+    const base = { look: DEFAULT_LOOK, mood: 'neutral' as const, width: 496, label: 'Nokta', headline: 'Buradayım.', chip: 'Hazır', lines: ['Son iş'] }
+    const small = heroSvg({ ...base, png: 'A'.repeat(20_000), blinkPng: 'B'.repeat(20_000) })
+    expect(small.source).toContain('base64,' + 'B'.repeat(20_000))
+    // two frames too big together: the blink goes
+    const big = heroSvg({ ...base, png: 'A'.repeat(70_000), blinkPng: 'B'.repeat(70_000) })
+    expect(big.source.length).toBeLessThanOrEqual(120_000)
+    expect(big.source).toContain('base64,' + 'A'.repeat(70_000))
+    expect(big.source).not.toContain('BBBB')
+    // one frame too big: only the vector Nokta is left
+    const huge = heroSvg({ ...base, png: 'A'.repeat(130_000) })
+    expect(huge.source.length).toBeLessThanOrEqual(120_000)
+    expect(huge.source).not.toContain('<image')
+    // narrow: the picture goes on top, and the card gets taller
+    expect(heroSvg({ ...base, width: 340 }).height).toBeGreaterThan(small.height)
+    expect(heroSvg({ ...base, width: 100 }).width).toBe(300)
+  })
+
   test('the persona and the spinner words carry the name', () => {
     expect(personaText('Pamuk')).toContain('Pamuk')
     expect(spinnerWord('Pamuk', 'thinking', 'Sauteing')).toContain('Pamuk')
@@ -252,6 +292,7 @@ describe('the pure parts', () => {
     const withRender = avatarSvg({ look, mood: 'work', png: 'AAAA', blinkPng: 'BBBB', size: 100, animated: true, glow: true })
     expect(withRender).toContain('data:image/png;base64,AAAA')
     expect(withRender).toContain('data:image/png;base64,BBBB') // the shut eyes, shown for a moment
+    expect(withRender.split('base64,AAAA').length).toBe(2) // once per frame: a size limit is near
     expect(withRender).toContain('<animate')
     expect(withRender).toContain('&lt;b&gt;&amp;&quot;')
     expect(withRender).not.toContain('<b>')
@@ -278,13 +319,19 @@ describe('on every surface', () => {
         props: PANE,
         viewport: VIEWPORT,
       })
-      expect(await ui.find({ type: 'Text', text: 'Nokta' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: 'hazır' })).toBeDefined()
       if (surface === 'terminal') {
+        expect(await ui.find({ type: 'Text', text: 'Nokta' })).toBeDefined()
+        expect(await ui.find({ type: 'Text', text: 'hazır' })).toBeDefined()
         // no assets can be read here: a text face stands in for the picture
         expect(await ui.find({ type: 'Text', text: '(• ‿ •)' })).toBeDefined()
       } else {
+        // the others get one designed card: the name, the headline and the pill are inside the picture
         expect(await ui.find({ type: 'Svg' })).toBeDefined()
+        const card = JSON.stringify(await ui.drawn())
+        expect(card).toContain('Buradayım.')
+        expect(card).toContain('NOKTA')
+        expect(card).toContain('Hazır')
+        expect(await ui.find({ key: 'pet' })).toBeDefined()
       }
       await ui.press({ key: 'body' })
       expect(look(seen)?.body).toBe('bulut')
@@ -403,6 +450,32 @@ describe('on every surface', () => {
     const busy = await $.ui.mount({ plugin: 'nokta', surface: 'terminal', component: 'AbovePrompt', props: { ...props, isWorking: true }, viewport: VIEWPORT })
     expect(await busy.find({ type: 'Text', text: 'çalışıyor' })).toBeDefined()
     await busy.unmount()
+  })
+
+  test('each reply opens with Nokta\'s face and name on the remote surfaces, and only the first block of a reply', async ($, on) => {
+    engine(on, { files: { 'nokta-clay-none-neutral.png': { base64: TINY_PNG } } })
+    for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
+      const first = await $.ui.mount({ plugin: 'nokta', surface, component: 'AssistantMessage', props: { text: 'Merhaba', isFirstOfReply: true }, viewport: VIEWPORT })
+      expect(await first.find({ type: 'Text', text: 'Nokta' })).toBeDefined()
+      expect(await first.find({ type: 'Svg' })).toBeDefined()
+      expect(await first.find({ type: 'Text', text: 'engine AssistantMessage' })).toBeDefined() // the reply itself, still the engine's
+      await first.unmount()
+      const next = await $.ui.mount({ plugin: 'nokta', surface, component: 'AssistantMessage', props: { text: 'Devam', isFirstOfReply: false }, viewport: VIEWPORT })
+      expect(await next.find({ type: 'Text', text: 'Nokta' })).toBeUndefined()
+      expect(await next.find({ type: 'Text', text: 'engine AssistantMessage' })).toBeDefined()
+      await next.unmount()
+    }
+    // the terminal keeps its own bullet
+    const terminal = await $.ui.mount({ plugin: 'nokta', surface: 'terminal', component: 'AssistantMessage', props: { text: 'Merhaba', isFirstOfReply: true }, viewport: VIEWPORT })
+    expect(await terminal.find({ type: 'Text', text: 'Nokta' })).toBeUndefined()
+    await terminal.unmount()
+  })
+
+  test('the label can be switched off', { options: { messages: false } }, async ($, on) => {
+    engine(on, { files: { 'nokta-clay-none-neutral.png': { base64: TINY_PNG } } })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Merhaba', isFirstOfReply: true }, viewport: VIEWPORT })
+    expect(await ui.find({ type: 'Text', text: 'Nokta' })).toBeUndefined()
+    await ui.unmount()
   })
 
   test('the spinner speaks Turkish, with the name in it', async ($, on) => {

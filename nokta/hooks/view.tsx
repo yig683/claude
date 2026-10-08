@@ -3,7 +3,7 @@
 import type { Elements } from 'claude-code'
 
 import type { NoktaJob, NoktaLook, NoktaMood, NoktaStep, NoktaTodo } from '../types'
-import { ACCESSORY_LABEL, BODY_LABEL, clip, COLOR_LABEL, fmtDuration, MOOD } from './model'
+import { ACCESSORY_LABEL, BODY_LABEL, clip, COLOR_LABEL, fmtDuration, groupSteps, MOOD } from './model'
 
 /** The elements every surface draws. */
 export type Common = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>
@@ -47,15 +47,36 @@ const TODO_GLYPH = { pending: '☐', in_progress: '◐', completed: '☑' } as c
 const JOB_GLYPH = { run: '●', ok: '✓', err: '✗', stop: '■' } as const
 const JOB_COLOR = { run: 'claude', ok: 'success', err: 'error', stop: 'warning' } as const
 
+/** A section's small label, in capitals (the terminal's own text cannot be set smaller). */
 function Heading(U: Common, text: string, extra?: string): JSX.Element {
   const { Box, Text } = U
   return (
     <Box flexDirection="row" gap={1}>
       <Text bold dimColor>
-        {text}
+        {text.toLocaleUpperCase('tr')}
       </Text>
       {extra !== undefined && <Text dimColor>{extra}</Text>}
     </Box>
+  )
+}
+
+/** A button: the terminal's `[ label ]` with its hotkey; elsewhere the surface's own native button. */
+function Btn(
+  U: Common,
+  isTerminal: boolean,
+  o: { key: string; label: string; onPress: () => Promise<void>; hotkey?: string; isDim?: boolean; isPrimary?: boolean },
+): JSX.Element {
+  const { Button } = U
+  return isTerminal ? (
+    <Button key={o.key} plain hotkey={o.hotkey} dimColor={o.isDim} label={o.label} onPress={o.onPress} />
+  ) : (
+    <Button
+      key={o.key}
+      variant={o.isPrimary === true ? 'primary' : undefined}
+      dimColor={o.isDim}
+      label={o.label}
+      onPress={o.onPress}
+    />
   )
 }
 
@@ -71,12 +92,13 @@ export function statsLine(d: Pick<PaneData, 'mood' | 'elapsed' | 'jobs'>): strin
 }
 
 export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Element): JSX.Element {
-  const { Box, Text, Button } = U
+  const { Box, Text } = U
   const m = MOOD[d.mood]
+  const isHero = !d.isTerminal && !d.isCompact // the remote surfaces get one designed card on top
   // beside the picture on a wide terminal; everywhere else the picture sits on top, centred
   const isSideBySide = d.isTerminal && !d.isCompact && d.columns >= 56
   const room = d.isCompact ? 3 : Math.max(3, Math.min(8, d.rows - 24))
-  const steps = d.steps.slice(-room)
+  const steps = groupSteps(d.steps).slice(-room)
   const todos = d.todos.slice(0, d.isCompact ? 3 : 6)
   const jobs = d.jobs.slice(0, d.isCompact ? 2 : 5)
   const notes = d.notes.slice(-(d.isCompact ? 2 : 5))
@@ -115,6 +137,11 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
             {statsLine(d)}
           </Text>
         </Box>
+      ) : isHero ? (
+        <Box flexDirection="column" alignItems="center" gap={1}>
+          {avatar}
+          {Btn(U, false, { key: 'pet', label: "♡ Nokta'yı sev", onPress: a.pet, isPrimary: true })}
+        </Box>
       ) : isSideBySide ? (
         <Box flexDirection="row" gap={2} alignItems="center">
           {avatar}
@@ -124,7 +151,7 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
         <Box flexDirection="column" alignItems="center">
           {avatar}
           {identity}
-          <Button key="pet" plain hotkey="v" label="♡ Nokta'yı sev" onPress={a.pet} />
+          {Btn(U, true, { key: 'pet', label: "♡ Nokta'yı sev", onPress: a.pet, hotkey: 'v' })}
         </Box>
       )}
 
@@ -135,8 +162,9 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
           <Box flexDirection="row" gap={1}>
             <Text color={STEP_COLOR[step.status]}>{STEP_GLYPH[step.status]}</Text>
             <Text wrap="truncate-end" dimColor={step.status === 'ok'}>
-              {clip(step.label, Math.max(12, d.columns - 4))}
+              {clip(step.label, Math.max(12, d.columns - 10))}
             </Text>
+            {step.count > 1 && <Text dimColor>×{step.count}</Text>}
           </Box>
         ))}
       </Box>
@@ -170,13 +198,7 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
               <Text color="claude">•</Text>
               <Text wrap="truncate-end">{clip(note, Math.max(12, d.columns - 10))}</Text>
               <Box flexGrow={1} />
-              <Button
-                key={`forget-${firstNote + i}`}
-                plain
-                dimColor
-                label="×"
-                onPress={() => a.forget(firstNote + i)}
-              />
+              {Btn(U, true, { key: `forget-${firstNote + i}`, label: '×', onPress: () => a.forget(firstNote + i), isDim: true })}
             </Box>
           ))}
         </Box>
@@ -196,56 +218,51 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
         ))}
       </Box>
 
-      <Box flexDirection="column">
+      <Box flexDirection="column" gap={d.isTerminal ? 0 : 1}>
         {Heading(U, 'Görünüm')}
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-          <Button
-            key="body"
-            plain
-            hotkey="g"
-            label={`Gövde: ${BODY_LABEL[d.look.body]} ▸`}
-            onPress={a.cycleBody}
-          />
+        <Box flexDirection="row" flexWrap="wrap" columnGap={d.isTerminal ? 2 : 1} rowGap={d.isTerminal ? 0 : 1}>
+          {Btn(U, d.isTerminal, {
+            key: 'body',
+            label: `Gövde: ${BODY_LABEL[d.look.body]}${d.isTerminal ? ' ▸' : ''}`,
+            onPress: a.cycleBody,
+            hotkey: 'g',
+          })}
           {d.look.body === 'nokta' ? (
-            <Button
-              key="color"
-              plain
-              hotkey="r"
-              label={`Renk: ${COLOR_LABEL[d.look.color]} ▸`}
-              onPress={a.cycleColor}
-            />
+            Btn(U, d.isTerminal, {
+              key: 'color',
+              label: `Renk: ${COLOR_LABEL[d.look.color]}${d.isTerminal ? ' ▸' : ''}`,
+              onPress: a.cycleColor,
+              hotkey: 'r',
+            })
           ) : (
             <Text dimColor>Renk: {COLOR_LABEL[d.look.color]} (sabit)</Text>
           )}
           {d.look.body === 'nokta' ? (
-            <Button
-              key="accessory"
-              plain
-              hotkey="a"
-              label={`Aksesuar: ${ACCESSORY_LABEL[d.look.accessory]} ▸`}
-              onPress={a.cycleAccessory}
-            />
+            Btn(U, d.isTerminal, {
+              key: 'accessory',
+              label: `Aksesuar: ${ACCESSORY_LABEL[d.look.accessory]}${d.isTerminal ? ' ▸' : ''}`,
+              onPress: a.cycleAccessory,
+              hotkey: 'a',
+            })
           ) : (
             <Text dimColor>Aksesuar: yok (sabit)</Text>
           )}
         </Box>
-        <Box flexDirection="row" flexWrap="wrap" columnGap={2}>
-          <Button
-            key="quiet"
-            plain
-            hotkey="s"
-            label={`Sessiz: ${d.isQuiet ? 'açık' : 'kapalı'}`}
-            onPress={a.toggleQuiet}
-          />
-          <Button
-            key="band"
-            plain
-            hotkey="b"
-            label={`Bant: ${d.isBandHidden ? 'gizli' : 'açık'}`}
-            onPress={a.toggleBand}
-          />
-          {isSideBySide && <Button key="pet" plain hotkey="v" label="♡ Sev" onPress={a.pet} />}
-          <Button key="close" plain hotkey="k" dimColor label="Kapat" onPress={a.close} />
+        <Box flexDirection="row" flexWrap="wrap" columnGap={d.isTerminal ? 2 : 1} rowGap={d.isTerminal ? 0 : 1}>
+          {Btn(U, d.isTerminal, {
+            key: 'quiet',
+            label: `Sessiz: ${d.isQuiet ? 'açık' : 'kapalı'}`,
+            onPress: a.toggleQuiet,
+            hotkey: 's',
+          })}
+          {Btn(U, d.isTerminal, {
+            key: 'band',
+            label: `Bant: ${d.isBandHidden ? 'gizli' : 'açık'}`,
+            onPress: a.toggleBand,
+            hotkey: 'b',
+          })}
+          {isSideBySide && Btn(U, true, { key: 'pet', label: '♡ Sev', onPress: a.pet, hotkey: 'v' })}
+          {Btn(U, d.isTerminal, { key: 'close', label: 'Kapat', onPress: a.close, hotkey: 'k', isDim: true })}
         </Box>
       </Box>
     </Box>
@@ -259,11 +276,12 @@ export type BandData = {
   /** Seconds the running turn has taken; 0 when none runs. */
   elapsed: number
   tools: number
-  /** What to say on the second line when nothing is going on (how the last job went, or that it rests). */
+  /** What to say when nothing is going on (how the last job went, or that it rests). */
   note: string
   columns: number
 }
 
+/** The band above the prompt: one slim line, the picture (where the surface draws one) at its left. */
 export function bandRow(
   U: Common,
   d: BandData,
@@ -272,44 +290,25 @@ export function bandRow(
 ): JSX.Element {
   const { Box, Text, Button } = U
   const m = MOOD[d.mood]
-  const isNarrow = d.columns < 64
   const isBusy = d.mood === 'work' || d.mood === 'ask' || d.mood === 'approve'
-  const detail =
-    d.detail === '' || d.mood === 'neutral' || d.mood === 'sleep'
-      ? ''
-      : clip(d.detail, Math.max(10, d.columns - (face === undefined ? 36 : 30)))
+  const room = Math.max(10, d.columns - (face === undefined ? 36 : 40))
+  const doing = d.detail === '' || d.mood === 'neutral' || d.mood === 'sleep' ? '' : d.detail
   const timing = isBusy && d.elapsed > 0 ? `${fmtDuration(d.elapsed)} · ${d.tools} araç` : ''
-  // with a picture the band is two lines (name and mood over what it does); without, one line
-  if (face !== undefined) {
-    return (
-      <Box flexDirection="row" gap={1} alignItems="center">
-        {face}
-        <Box flexDirection="column">
-          <Box flexDirection="row" gap={1}>
-            <Text bold>{d.look.name}</Text>
-            <Text color={m.color} bold>
-              {m.label}
-            </Text>
-          </Box>
-          <Text dimColor wrap="truncate-end">
-            {detail !== '' ? (timing === '' ? detail : `${detail} · ${timing}`) : timing === '' ? clip(d.note, 60) : timing}
-          </Text>
-        </Box>
-        <Box flexGrow={1} />
-        <Button key="panel" plain dimColor label="panel" onPress={onPanel} />
-      </Box>
-    )
-  }
+  const line = clip([doing, timing].filter(part => part !== '').join(' · ') || d.note, room)
   return (
     <Box flexDirection="row" gap={1} alignItems="center">
-      <Text color={m.color} bold>
-        {m.face}
-      </Text>
+      {face ?? (
+        <Text color={m.color} bold>
+          {m.face}
+        </Text>
+      )}
       <Text bold>{d.look.name}</Text>
-      <Text color={m.color}>{m.label}</Text>
-      {!isNarrow && detail !== '' && (
+      <Text color={m.color} bold>
+        {m.label}
+      </Text>
+      {d.columns >= 56 && (
         <Text dimColor wrap="truncate-end">
-          · {detail}
+          · {line}
         </Text>
       )}
       <Box flexGrow={1} />

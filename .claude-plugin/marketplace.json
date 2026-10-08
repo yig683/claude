@@ -11,7 +11,7 @@
       "name": "nokta",
       "source": "./nokta",
       "description": "Durumunu yüzüyle gösterir, adıyla seslenince karşılık verir, hatırlar, onay beklerken el kaldırır; panel, bant, durum satırı, Türkçe işlem çarkı, risk notları ve hafif bir Türkçe kişilik.",
-      "version": "1.1.0"
+      "version": "1.2.0"
     }
   ]
 }

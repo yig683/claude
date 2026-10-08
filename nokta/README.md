@@ -37,7 +37,7 @@ Bulut oturumlarında (telefon, web) ekran çizen bir yüzey bağlı olmadığı 
 
 Adıyla da seslenebilirsin: "Nokta", "Merhaba Nokta", "Nokta, şunu yap".
 
-Ayarlar (`/config` menüsünde): `persona`, `band`, `autoOpen`, `greet`, `riskNotes`, `memory`, `sound`, `terminalImages`, `sleepMinutes`.
+Ayarlar (`/config` menüsünde): `persona`, `band`, `autoOpen`, `greet`, `riskNotes`, `messages`, `memory`, `sound`, `terminalImages`, `sleepMinutes`.
 
 Tüm ayrıntılar, sınırlar ve resimler depo kökündeki [README](../README.md) dosyasında.
 

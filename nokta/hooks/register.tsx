@@ -10,7 +10,7 @@ import type { Elements, EngineInterface, PluginOptions, Register, RenderSurface,
 
 import type { NoktaJob, NoktaLook, NoktaMood, NoktaStep, NoktaTodo } from '../types'
 import type { RasterPack } from './art'
-import { avatarSvg, b64decode, canBlink, rasterCells } from './art'
+import { avatarSvg, b64decode, canBlink, heroSvg, rasterCells } from './art'
 import {
   ACCESSORIES,
   ACCESSORY_LABEL,
@@ -73,6 +73,7 @@ type Settings = {
   isSound: boolean
   isKittyWanted: boolean
   isMemory: boolean
+  isMessages: boolean
   sleepMs: number
 }
 
@@ -86,6 +87,7 @@ let opt: Settings = {
   isSound: false,
   isKittyWanted: false,
   isMemory: true,
+  isMessages: true,
   sleepMs: 20 * 60_000,
 }
 let lastActiveAt = -1
@@ -112,6 +114,7 @@ function readSettings(options: PluginOptions): Settings {
     isSound: options['sound'] === true,
     isKittyWanted: options['terminalImages'] === 'kitty',
     isMemory: options['memory'] !== false,
+    isMessages: options['messages'] !== false,
     sleepMs: Math.max(1, Number(options['sleepMinutes']) || 20) * 60_000,
   }
 }
@@ -206,65 +209,90 @@ async function loadCells(
   return art
 }
 
-/** Nokta's picture for a surface: terminal cells (or a kitty image), or an SVG on the others. */
-async function avatarFor(
+/** Nokta's picture on the terminal: cells (or a kitty image); only the pane has one there. */
+async function terminalAvatar(
   $: Dollar,
   table: unknown,
-  surface: RenderSurface,
   look: NoktaLook,
   mood: NoktaMood,
-  size: 'pane' | 'band',
-): Promise<JSX.Element | undefined> {
+): Promise<JSX.Element> {
   const m = MOOD[mood]
-  if (surface === 'terminal') {
-    if (size === 'band') return undefined
-    const { Raster, Image, Text } = table as Elements['terminal']
-    if (opt.isKittyWanted && isKitty) {
-      const png = await loadPng($, look, mood)
-      if (png !== undefined) {
-        return <Image key="nokta-avatar" source={{ png }} columns={20} rows={10} alt={m.face} />
-      }
+  const { Raster, Image, Text } = table as Elements['terminal']
+  if (opt.isKittyWanted && isKitty) {
+    const png = await loadPng($, look, mood)
+    if (png !== undefined) {
+      return <Image key="nokta-avatar" source={{ png }} columns={20} rows={10} alt={m.face} />
     }
-    const art = await loadCells($, look, mood)
-    if (art !== undefined) {
-      return <Raster key="nokta-avatar" columns={art.columns} rows={art.rows} cells={art.cells} />
-    }
-    return (
-      <Text bold color={m.color}>
-        {m.face}
-      </Text>
-    )
   }
-  // A still SVG, not an "interactive" one: the surface draws that kind in a sandboxed frame with a white
-  // background that also refuses the render's <image>. Motion is SMIL inside the SVG, and where the
-  // surface does not run it the picture is simply still.
+  const art = await loadCells($, look, mood)
+  if (art !== undefined) {
+    return <Raster key="nokta-avatar" columns={art.columns} rows={art.rows} cells={art.cells} />
+  }
+  return (
+    <Text bold color={m.color}>
+      {m.face}
+    </Text>
+  )
+}
+
+/**
+ * A small still picture of Nokta for the remote surfaces (the band's, the speaker label's). A still SVG,
+ * never an "interactive" one: the surface draws that kind in a sandboxed frame with a white background
+ * that also refuses the render's <image>. Motion is SMIL inside the SVG; where it does not run, it is still.
+ */
+async function smallAvatar(
+  $: Dollar,
+  table: unknown,
+  look: NoktaLook,
+  mood: NoktaMood,
+  px: number,
+): Promise<JSX.Element | undefined> {
   const { Svg } = table as Elements['desktop']
-  const isBig = size === 'pane'
+  const [png, pack] = await Promise.all([loadPng($, look, mood, true), loadPack($)])
+  if (png === undefined) return undefined
+  const cacheKey = `${iconKey(look, mood)}|${px}|${look.name}`
+  let source = svgCache.get(cacheKey)
+  if (source === undefined) {
+    source = avatarSvg({ look, mood, png, disc: pack?.disc[iconKey(look, mood)], size: px, animated: true, glow: false })
+    if (svgCache.size > 40) svgCache.clear()
+    svgCache.set(cacheKey, source)
+  }
+  return <Svg source={source} alt={`${look.name}: ${MOOD[mood].label}`} width={px} height={px} />
+}
+
+/** The pane's top card on the remote surfaces: Nokta big on a warm card, in its own words. */
+async function heroFor(
+  $: Dollar,
+  table: unknown,
+  look: NoktaLook,
+  mood: NoktaMood,
+  d: { columns: number; detail: string; elapsed: number; tools: number; note: string },
+): Promise<JSX.Element> {
+  const { Svg } = table as Elements['desktop']
+  const m = MOOD[mood]
   const [png, blinkPng, pack] = await Promise.all([
-    loadPng($, look, mood, !isBig),
-    isBig && canBlink(mood) ? loadPng($, look, 'sleep') : Promise.resolve(undefined),
+    loadPng($, look, mood),
+    canBlink(mood) ? loadPng($, look, 'sleep') : Promise.resolve(undefined),
     loadPack($),
   ])
-  const px = isBig ? 184 : 44
-  const cacheKey = `${iconKey(look, mood)}|${size}|${look.name}`
-  let source = png === undefined ? undefined : svgCache.get(cacheKey)
-  if (source === undefined) {
-    source = avatarSvg({
-      look,
-      mood,
-      png,
-      blinkPng,
-      disc: pack?.disc[iconKey(look, mood)],
-      size: px,
-      animated: true,
-      glow: isBig,
-    })
-    if (png !== undefined) {
-      if (svgCache.size > 24) svgCache.clear()
-      svgCache.set(cacheKey, source)
-    }
-  }
-  return <Svg source={source} alt={`${look.name}: ${m.label}`} width={px} height={px} />
+  const isBusy = mood === 'work' || mood === 'ask' || mood === 'approve'
+  const doing = d.detail === '' || mood === 'neutral' || mood === 'sleep' ? '' : d.detail
+  const first = m.label.charAt(0).toLocaleUpperCase('tr') + m.label.slice(1)
+  const hero = heroSvg({
+    look,
+    mood,
+    png,
+    blinkPng,
+    disc: pack?.disc[iconKey(look, mood)],
+    width: Math.round(d.columns * 8) - 8,
+    label: `${look.name} · ${mood === 'work' ? 'şu an' : mood === 'sleep' ? 'dinleniyor' : 'burada'}`,
+    headline: m.headline,
+    chip: isBusy && d.elapsed > 0 ? `${first} · ${fmtDuration(d.elapsed)}` : first,
+    lines: isBusy ? [doing, `${d.tools} araç`].filter(line => line !== '') : [d.note],
+  })
+  return (
+    <Svg source={hero.source} alt={`${look.name}: ${m.label}`} width={hero.width} height={hero.height} />
+  )
 }
 
 // ------------------------------------------------------------------ state and display
@@ -940,7 +968,18 @@ export const register: Register = (on, options) => {
     const rows = e.props.scroll.bodyRows
     // a short room (an inline pane, a small window) gets a line of text instead of the big picture
     const isCompact = e.surface === 'terminal' ? rows < 28 : rows < 14
-    const avatar = isCompact ? undefined : await avatarFor($, U, e.surface, look, mood, 'pane')
+    const elapsed = run === undefined ? 0 : Math.max(0, (now - run.startedAt) / 1000)
+    const avatar = isCompact
+      ? undefined
+      : e.surface === 'terminal'
+        ? await terminalAvatar($, U, look, mood)
+        : await heroFor($, U, look, mood, {
+            columns: e.props.bodyColumns,
+            detail,
+            elapsed,
+            tools: run?.tools ?? 0,
+            note: statsLine({ mood, elapsed, jobs }),
+          })
     return paneBody(
       U,
       {
@@ -952,7 +991,7 @@ export const register: Register = (on, options) => {
         jobs,
         notes,
         isMemory: opt.isMemory,
-        elapsed: run === undefined ? 0 : Math.max(0, (now - run.startedAt) / 1000),
+        elapsed,
         columns: e.props.bodyColumns,
         rows,
         isCompact,
@@ -976,7 +1015,7 @@ export const register: Register = (on, options) => {
     const [look, detail, jobs] = await Promise.all([read($, lookA), read($, detailA), read($, jobsA)])
     const now = await $.clock.now()
     const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
-    const face = await avatarFor($, U, e.surface, look, mood, 'band')
+    const face = e.surface === 'terminal' ? undefined : await smallAvatar($, U, look, mood, 30)
     return bandRow(
       U,
       {
@@ -994,6 +1033,30 @@ export const register: Register = (on, options) => {
       },
     )
   })
+
+  // Each reply opens with Nokta's face and name, as a speaker label: the character is the one speaking, in
+  // the chat itself, not only in a panel beside it. Always the calm face (the label must not change with
+  // the mood, or every old message would redraw each time Nokta's mood does). The engine draws the reply
+  // itself and ours wraps it.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (!opt.isMessages || e.surface === 'terminal' || !e.props.isFirstOfReply || e.props.isSummary === true) {
+      return next(e)
+    }
+    const look = await read($, lookA)
+    const U = $.ui.resolve(e)
+    const face = await smallAvatar($, U, look, 'neutral', 26)
+    if (face === undefined) return next(e)
+    const { Box, Text } = U
+    return (
+      <Box flexDirection="column" gap={0}>
+        <Box flexDirection="row" gap={1} alignItems="center">
+          {face}
+          <Text bold>{look.name}</Text>
+        </Box>
+        {await next(e)}
+      </Box>
+    )
+  }).catch(($, e, next) => next(e))
 
   // Turkish words for the spinner line, with Nokta's name in them. (On the desktop the word says
   // what the step is doing, "Creating notes.md": that stays as the engine has it.)

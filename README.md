@@ -35,7 +35,8 @@ Bu oturumlar bulutta, ekransız (headless) çalışır ve gözlemlediğim kadar�
 
 | Nerede | Ne görürsün |
 | --- | --- |
-| **Panel** (`/nokta`) | Büyük 3B Nokta (ruh haline göre hareket eder, göz kırpar), adı, ruh hali, süre ve araç sayısı; "Nokta'yı sev" düğmesi; "Şu an" adımları; modelin kendi görev listesi (TodoWrite / TaskCreate); **hafıza**; son işler; görünüm düğmeleri (gövde, renk, aksesuar, sessiz, bant). Masaüstünde ve geniş terminalde oturum başında kendiliğinden açılır. |
+| **Cevapların başında yüz** | Masaüstü, VS Code ve mobilde her cevabın başına Nokta'nın küçük yüzü ve adı konur: konuşan o. Terminalde cevabın kendi işareti kalır. Ayar: `messages`. |
+| **Panel** (`/nokta`) | Sıcak tonlu bir kart: büyük 3B Nokta (ruh haline göre hareket eder, göz kırpar), birinci ağızdan başlık ("Çalışıyorum.", "Onayını bekliyorum."), ruh hali hapı, süre ve araç sayısı; "Nokta'yı sev" düğmesi; "Şu an" adımları; modelin kendi görev listesi (TodoWrite / TaskCreate); **hafıza**; son işler; görünüm düğmeleri (gövde, renk, aksesuar, sessiz, bant). Masaüstünde ve geniş terminalde oturum başında kendiliğinden açılır. |
 | **Bant** (girdi kutusunun üstü) | `(• _ •) Nokta çalışıyor · Bash: npm test` ve bir `panel` düğmesi. Terminal ve masaüstünde. |
 | **Durum satırı** | Aynı bilgi tek satırda, girdi kutusunun altında. |
 | **Bildirimler** | Selam, "onayını bekliyor", "tamamladı · 42 sn · 5 araç", "bir sorun var". Ekran yoksa (bulut oturumu) aynı mesajlar sohbette sönük satır olarak çıkar. |
@@ -52,13 +53,17 @@ Her yüzey kendi çizim tablosunu kullanır:
 | Yüzey | Resim |
 | --- | --- |
 | Terminal | Yarım blok (`▀ ▄`) hücre ızgarası, 24 × 12 hücre, her terminalde. `terminalImages: kitty` ve kitty / Ghostty / WezTerm'de gerçek 3B PNG. |
-| Masaüstü, VS Code, mobil | Durağan bir SVG (etkileşimli çerçeve değil: masaüstü o çerçevede 3B görseli engelliyor ve beyaz zemin açıyor): 3B render, ruh halinin renginde yumuşak bir hale, ruh haline göre rozet (üç nokta, `?`, `!`, kıvılcım, ter damlası, `z`) ve SMIL hareketi (nefes, zıplama, sallanma, göz kırpma). Yüzey SMIL'i çalıştırmazsa resim durağan kalır. |
+| Masaüstü, VS Code, mobil | Durağan SVG'ler (etkileşimli çerçeve değil: masaüstü o çerçevede 3B görseli engelliyor ve beyaz zemin açıyor). Panelin üst kartı tek bir resim: 3B render, vücudun renginde yumuşak bir hale, ruh haline göre rozet (üç nokta, `?`, `!`, kıvılcım, ter damlası, `z`), serif başlık, küçük harfli etiket ve hap; metinler hem koyu hem açık temada okunsun diye vurgu rengi ve gri ile yazılır. Hareket SMIL ile (nefes, zıplama, sallanma, göz kırpma); yüzey SMIL'i çalıştırmazsa resim durağan kalır. Bant tek satır, küçük yüzle; cevapların başında 26 px'lik yüz. |
 
 ![Terminal hücreleri](docs/terminal-hucre.png)
 
 Yukarıdaki resim, terminalin çizeceği hücrelerin (modun kendi koduyla üretilmiş) geri çözülüp büyütülmüş hali.
 
 ![Masaüstü SVG'leri](docs/masaustu-svg.png)
+
+Aşağıdaki, masaüstü penceresinin **benzetimi**: gerçek uygulama ekran görüntüsü değil, modun ürettiği SVG'lerin aynısıyla ve yaklaşık yerleşimle kurulmuş bir önizleme (solda cevap başlarındaki yüz ve tek satırlık bant, sağda panel).
+
+![Masaüstü benzetimi](docs/masaustu-benzetim.png)
 
 Her ruh halinin iki hali var: render'lı SVG, ve yanında açık renkli kutuda render yüklenemezse görünecek vektör yedek yüz. Bir yüzey `<image>` içindeki veri adresini temizlerse Nokta yine de yüzsüz kalmaz.
 
@@ -94,6 +99,7 @@ Kurulumda sorulur, sonra `/config` menüsünde satır olarak durur:
 | `autoOpen` | açık | Oturum başında paneli aç (terminalde 144 sütundan geniş, masaüstünde). |
 | `greet` | açık | Oturum başında kısa selam. |
 | `riskNotes` | açık | Onay isteyen riskli komutların altına not. |
+| `messages` | açık | Masaüstü, VS Code ve mobilde cevapların başına Nokta'nın yüzü ve adı. |
 | `memory` | açık | Hafıza: `remember` aracı ve hafıza bölümü. Kapalıysa hiçbiri eklenmez. |
 | `sound` | kapalı | Ses (macOS). |
 | `terminalImages` | `raster` | `kitty`: kitty ve Ghostty'de gerçek görsel. |
@@ -118,7 +124,7 @@ Kod `nokta/hooks/` altında:
 - `model.ts`: saf mantık (görünüm, ruh halleri, Türkçe kelime katlama, risk notları, kişilik metni).
 - `art.ts`: saf çizim (hücreler, SVG, base64).
 - `view.tsx`: panel ve bant ağaçları.
-- `tests/nokta.test.ts`: 50 test.
+- `tests/nokta.test.ts`: 55 test.
 
 Durum `$.state` altında `nokta.*` anahtarlarında (`types/index.d.ts`), kalıcı olanlar (görünüm, tercihler, son işler) `$.store`'da.
 
@@ -131,7 +137,7 @@ Nokta hiçbir ağ isteği yapmaz. Yazdıkları yalnızca yerel: görünüm ve te
 Dürüst olmak gerekirse:
 
 - **Bulut oturumlarında resim yok.** Bu oturum türünde ekran çizen bir yüzey bağlı değil (yukarıda Kurulum). Nokta'nın resimleri terminalde, masaüstü uygulamasının yerel oturumlarında ve VS Code'da çizilir.
-- **Çizimi gerçek yüzeylerde görmedim.** Bu mod bir bulut ortamında yazıldı: terminalde Ink'in ve masaüstü sayfasının gerçek boyasını göremedim. Doğrulananlar: `claude plugin validate`, `tsc`, ve `claude plugin test` ile 50 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor, `Raster` hücreleri dahil). SVG'ler Chromium'da, hücreler görüntüye geri çevrilerek elle bakıldı.
+- **Çizimi gerçek yüzeylerde görmedim.** Bu mod bir bulut ortamında yazıldı: terminalde Ink'in ve masaüstü sayfasının gerçek boyasını göremedim. Doğrulananlar: `claude plugin validate`, `tsc`, ve `claude plugin test` ile 55 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor, `Raster` hücreleri dahil). SVG'ler Chromium'da, hücreler görüntüye geri çevrilerek elle bakıldı.
 - **El ne zaman iner?** Motor "onayladın" diye bir olay vermiyor. Nokta, çağrı döndüğünde işine döner. Onayladığın uzun bir komut çalışırken el havada görünebilir.
 - **SVG hareketi** (nefes, rozet) yüzeyin SMIL desteğine bağlı; çalışmazsa durağan resim görünür.
 - **Ses** macOS'ta `afplay` ile; Linux ve Windows'ta çalmaz.

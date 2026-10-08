@@ -1,6 +1,6 @@
 {
   "name": "nokta",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan kişisel ajan. Durumunu yüzüyle gösterir, adıyla seslenince karşılık verir, hatırlar, onay beklerken el kaldırır; panelinde işlerini izlersin.",
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -41,6 +41,12 @@
       "type": "boolean",
       "title": "Risk notu",
       "description": "Onay isteyen riskli komutların altına Nokta'nın kısa notunu ekle.",
+      "default": true
+    },
+    "messages": {
+      "type": "boolean",
+      "title": "Cevapların başında yüz",
+      "description": "Masaüstü, VS Code ve mobilde her cevabın başına Nokta'nın küçük yüzü ve adı konur: konuşan o. Kapalıysa cevaplar olduğu gibi çizilir.",
       "default": true
     },
     "memory": {

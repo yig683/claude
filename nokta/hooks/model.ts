@@ -61,14 +61,14 @@ export function iconKey(look: NoktaLook, mood: NoktaMood): string {
   return `${look.body}-${look.color}-${look.accessory}-${mood}`
 }
 
-export const MOOD: Record<NoktaMood, { label: string; face: string; color: string }> = {
-  neutral: { label: 'hazır', face: '(• ‿ •)', color: '#2D8A4E' },
-  work: { label: 'çalışıyor', face: '(• _ •)', color: '#D97757' },
-  ask: { label: 'soru soruyor', face: '(• o •)', color: '#6E96B8' },
-  approve: { label: 'onay bekliyor', face: '\\(• ▿ •)', color: '#C2532F' },
-  happy: { label: 'tamamladı', face: '(^ ▿ ^)', color: '#2D8A4E' },
-  worry: { label: 'sorun var', face: '(• ~ •)', color: '#A3322A' },
-  sleep: { label: 'uyuyor', face: '(- _ -)', color: '#8A867D' },
+export const MOOD: Record<NoktaMood, { label: string; face: string; color: string; ui: string; headline: string }> = {
+  neutral: { label: 'hazır', face: '(• ‿ •)', color: '#2D8A4E', ui: '#3FA864', headline: 'Buradayım.' },
+  work: { label: 'çalışıyor', face: '(• _ •)', color: '#D97757', ui: '#E08560', headline: 'Çalışıyorum.' },
+  ask: { label: 'soru soruyor', face: '(• o •)', color: '#6E96B8', ui: '#6E9FD0', headline: 'Sana bir sorum var.' },
+  approve: { label: 'onay bekliyor', face: '\\(• ▿ •)', color: '#C2532F', ui: '#E0603A', headline: 'Onayını bekliyorum.' },
+  happy: { label: 'tamamladı', face: '(^ ▿ ^)', color: '#2D8A4E', ui: '#3FA864', headline: 'Tamamladım!' },
+  worry: { label: 'sorun var', face: '(• ~ •)', color: '#A3322A', ui: '#D9534A', headline: 'Bir sorun var.' },
+  sleep: { label: 'uyuyor', face: '(- _ -)', color: '#8A867D', ui: '#9A968E', headline: 'Dinleniyorum.' },
 }
 
 export function clip(text: string, max: number): string {
@@ -88,7 +88,7 @@ export function fmtDuration(totalSeconds: number): string {
 
 function baseName(path: unknown): string {
   const p = typeof path === 'string' ? path : ''
-  const parts = p.split('/').filter(Boolean)
+  const parts = p.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? p
 }
 
@@ -97,7 +97,8 @@ export function describeTool(tool: string, input: Record<string, unknown>): stri
   const str = (k: string): string => (typeof input[k] === 'string' ? (input[k] as string) : '')
   switch (tool) {
     case 'Bash':
-      return `Bash: ${clip(str('command'), 56)}`
+    case 'PowerShell':
+      return `${tool}: ${clip(str('command'), 56)}`
     case 'Edit':
     case 'Write':
     case 'Read':
@@ -118,12 +119,37 @@ export function describeTool(tool: string, input: Record<string, unknown>): stri
     case 'Task':
       return `Alt ajan: ${clip(str('description') || str('subagent_type'), 44)}`
     case 'TodoWrite':
+    case 'TaskCreate':
+    case 'TaskUpdate':
       return 'Görev listesini güncelledi'
     case 'AskUserQuestion':
       return 'Sana bir soru soruyor'
-    default:
-      return tool.startsWith('mcp__') ? `${tool.replace(/^mcp__/, '').replace(/__/g, ' / ')}` : tool
+    default: {
+      const name = tool.startsWith('mcp__') ? tool.replace(/^mcp__/, '').replace(/__/g, ' / ') : tool
+      // any other tool: say what it was pointed at, when that is easy to tell
+      const hint =
+        str('command') || baseName(str('file_path') || str('path')) || str('pattern') || str('query') || str('description')
+      return hint === '' ? name : `${name}: ${clip(hint, 44)}`
+    }
   }
+}
+
+/** The steps of a turn with neighbours that say the same thing folded into one ("PowerShell ×3"). */
+export function groupSteps<T extends { label: string; status: 'run' | 'ok' | 'err' }>(
+  steps: readonly T[],
+): Array<{ label: string; status: 'run' | 'ok' | 'err'; count: number }> {
+  const out: Array<{ label: string; status: 'run' | 'ok' | 'err'; count: number }> = []
+  for (const step of steps) {
+    const last = out[out.length - 1]
+    if (last !== undefined && last.label === step.label) {
+      last.count += 1
+      // a fold shows the worst of its steps: still running, else failed, else done
+      last.status = step.status === 'run' || last.status === 'run' ? 'run' : step.status === 'err' || last.status === 'err' ? 'err' : 'ok'
+    } else {
+      out.push({ label: step.label, status: step.status, count: 1 })
+    }
+  }
+  return out
 }
 
 const COMMAND_RISKS: ReadonlyArray<readonly [RegExp, string]> = [
