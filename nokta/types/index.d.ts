@@ -39,6 +39,8 @@ declare module 'claude-code' {
       steps: NoktaStep[]
       todos: NoktaTodo[]
       jobs: NoktaJob[]
+      /** What Nokta remembers (the person's notes and the ones the model proposed), newest last. */
+      notes: string[]
       isBandHidden: boolean
       isQuiet: boolean
     }

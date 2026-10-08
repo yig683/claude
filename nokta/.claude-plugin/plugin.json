@@ -1,13 +1,13 @@
 {
   "name": "nokta",
-  "version": "1.0.0",
-  "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan kişisel ajan. Durumunu yüzüyle gösterir, onay beklerken el kaldırır, panelinde işlerini izlersin.",
+  "version": "1.1.0",
+  "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan kişisel ajan. Durumunu yüzüyle gösterir, adıyla seslenince karşılık verir, hatırlar, onay beklerken el kaldırır; panelinde işlerini izlersin.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "persona": {
       "type": "string",
       "title": "Kişilik",
-      "description": "hafif: Nokta Türkçe, kısa ve net konuşur (sistem istemine kısa bir bölüm eklenir). kapali: hiçbir şey eklenmez.",
+      "description": "hafif: Nokta Türkçe, kısa ve net konuşur ve adıyla seslenince karşılık verir (sistem istemine kısa bir bölüm eklenir). kapali: hiçbir şey eklenmez.",
       "default": "hafif",
       "options": [
         "hafif",
@@ -43,6 +43,12 @@
       "description": "Onay isteyen riskli komutların altına Nokta'nın kısa notunu ekle.",
       "default": true
     },
+    "memory": {
+      "type": "boolean",
+      "title": "Hafıza",
+      "description": "Nokta hatırlasın: /nokta hatırla ile ya da senin söylediğin kalıcı tercihleri kendisi kaydetsin (sen onaylarsın, /nokta unut ile silersin). Kapalıysa not alma aracı ve hafıza bölümü eklenmez.",
+      "default": true
+    },
     "sound": {
       "type": "boolean",
       "title": "Ses",
@@ -62,8 +68,8 @@
     "sleepMinutes": {
       "type": "number",
       "title": "Uyku süresi (dakika)",
-      "description": "Bu kadar süre hareketsiz kalırsa Nokta uyur.",
-      "default": 8,
+      "description": "Bu kadar süre hareketsiz kalırsa Nokta uyur (uyurken de nefes alır).",
+      "default": 20,
       "min": 1,
       "max": 240
     }

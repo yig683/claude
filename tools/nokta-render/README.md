@@ -23,7 +23,7 @@ pip install bpy==4.5.14 numpy scipy scikit-image pillow
 | `nk_props.py` | Ruh halinin eşyaları: pencere, kıvılcım, konfeti, ter damlası, gözlük, bere, papyon. |
 | `batch_icons.py` | Modun ikon matrisi: gövde × renk × aksesuar × ruh hali, şeffaf 512 px. Kaldığı yerden devam eder (var olan dosyayı atlar). |
 | `batch_final.py` | Tasarım panoları için büyük tanıtım görselleri. |
-| `build_assets.py` | `batch_icons.py` çıktısından modun dosyalarını üretir: 128 px PNG'ler, terminal hücreleri için 24 × 24 RGBA resimler (`raster.json`), her silüetin içine sığan en büyük daire (vektör yedek yüz için). |
+| `build_assets.py` | `batch_icons.py` çıktısından modun dosyalarını üretir: 224 px (panel) ve 96 px (bant) PNG'ler, terminal hücreleri için 24 × 24 RGBA resimler (`raster.json`), her silüetin içine sığan en büyük daire (vektör yedek yüz için). |
 | `make_sounds.py` | Üç kısa notayı sentezler (`approve`, `done`, `error`); örnek ya da lisans yok. |
 
 ## Akış

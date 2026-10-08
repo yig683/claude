@@ -21,6 +21,10 @@ Bulut oturumlarında (telefon, web) ekran çizen bir yüzey bağlı olmadığı 
 ```
 /nokta                     paneli aç
 /nokta durum               durum ve son işler
+/nokta sev                 Nokta'yı sev
+/nokta hatırla <not>       bir şey hatırlat (sonraki oturumlarda da hatırlar)
+/nokta hafıza              hatırladıkları
+/nokta unut <no|hepsi>     bir notu ya da hepsini sil
 /nokta ad Pamuk            adını değiştir
 /nokta gövde tavşan        nokta | bulut | tavşan | üçgen
 /nokta renk adaçayı        kil | gök | adaçayı | kraft | mürekkep (yalnızca Nokta gövdesi)
@@ -31,7 +35,9 @@ Bulut oturumlarında (telefon, web) ekran çizen bir yüzey bağlı olmadığı 
 /nokta yardım
 ```
 
-Ayarlar (`/config` menüsünde): `persona`, `band`, `autoOpen`, `greet`, `riskNotes`, `sound`, `terminalImages`, `sleepMinutes`.
+Adıyla da seslenebilirsin: "Nokta", "Merhaba Nokta", "Nokta, şunu yap".
+
+Ayarlar (`/config` menüsünde): `persona`, `band`, `autoOpen`, `greet`, `riskNotes`, `memory`, `sound`, `terminalImages`, `sleepMinutes`.
 
 Tüm ayrıntılar, sınırlar ve resimler depo kökündeki [README](../README.md) dosyasında.
 
@@ -45,7 +51,8 @@ hooks/model.ts               saf mantık
 hooks/art.ts                 saf çizim: hücreler, SVG
 hooks/view.tsx               panel ve bant ağaçları
 types/index.d.ts             $.state sözleşmesi (nokta.*)
-assets/icons/                128 px şeffaf 3B görseller (gövde-renk-aksesuar-ruhhali.png)
+assets/icons/                224 px şeffaf 3B görseller (gövde-renk-aksesuar-ruhhali.png)
+assets/icons-s/              96 px aynıları (bant)
 assets/raster.json           terminal hücreleri için küçük RGBA resimler, vektör yedek daireleri
 assets/sounds/               onay, bitiş, hata
 tests/nokta.test.ts          claude plugin test

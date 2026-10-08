@@ -225,40 +225,114 @@ export type AvatarOptions = {
   mood: NoktaMood
   /** Base64 PNG of the render; without it only the vector Nokta is drawn. */
   png?: string
+  /** Base64 PNG of the same look with its eyes shut (the sleeping render): the blink. Poses that match only. */
+  blinkPng?: string
   /** A disc [cx, cy, r] (fractions) wholly inside the render, where the vector fallback sits. */
   disc?: [number, number, number]
   /** CSS pixels, both sides. */
   size: number
-  /** SMIL motion (breathing, the mood's prop); a static image ignores it. */
+  /** SMIL motion (breathing, hopping, blinking, the mood's prop); a surface that does not run it shows the still picture. */
   animated: boolean
+  /** A soft halo in the mood's colour behind the character (the pane's big picture). */
+  glow: boolean
+}
+
+/** The moods whose pose (arms down) the closed-eyes render matches: they may blink. */
+const BLINKS: Partial<Record<NoktaMood, number>> = { neutral: 5.4, work: 4.2, ask: 6, worry: 6.6 }
+
+/** Whether a mood's pose lets it blink with the sleeping render. */
+export function canBlink(mood: NoktaMood): boolean {
+  return BLINKS[mood] !== undefined
+}
+
+const EASE = '0.45 0 0.55 1'
+
+function animateTransform(type: 'translate' | 'rotate' | 'scale', values: string, dur: number, keyTimes?: string): string {
+  const n = values.split(';').length
+  const times = keyTimes ?? Array.from({ length: n }, (_, i) => (i / (n - 1)).toFixed(3)).join(';')
+  const splines = Array.from({ length: n - 1 }, () => EASE).join(';')
+  return (
+    `<animateTransform attributeName="transform" type="${type}" values="${values}" keyTimes="${times}" ` +
+    `calcMode="spline" keySplines="${splines}" dur="${dur}s" repeatCount="indefinite"/>`
+  )
+}
+
+/** The mood's motion around its content: breathing, bobbing, swaying, hopping, shivering. */
+function wrapMotion(mood: NoktaMood, inner: string, animated: boolean): string {
+  if (!animated) return `<g>${inner}</g>`
+  switch (mood) {
+    case 'work':
+      return `<g>${animateTransform('translate', '0 0;0 -2.4;0 0', 0.9)}${inner}</g>`
+    case 'ask':
+      return `<g>${animateTransform('rotate', '-2.6 50 90;2.6 50 90;-2.6 50 90', 2.6)}${inner}</g>`
+    case 'approve':
+      return `<g>${animateTransform('translate', '0 0;0 -5;0 0;0 0', 1.4, '0;0.22;0.44;1')}${inner}</g>`
+    case 'happy':
+      return `<g>${animateTransform('translate', '0 0;0 -7;0 0;0 0', 2, '0;0.17;0.34;1')}${inner}</g>`
+    case 'worry':
+      return `<g>${animateTransform('translate', '0 0;-0.9 0;0.9 0;-0.9 0;0.9 0;0 0;0 0', 2.6, '0;0.03;0.06;0.09;0.12;0.15;1')}${inner}</g>`
+    case 'sleep':
+      return (
+        `<g transform="translate(50 90)"><g>${animateTransform('scale', '1;1.03;1', 4)}` +
+        `<g transform="translate(-50 -90)">${inner}</g></g></g>`
+      )
+    default:
+      return `<g>${animateTransform('translate', '0 0;0 -1.6;0 0', 3.2)}${inner}</g>`
+  }
 }
 
 /**
- * Nokta as an SVG for the remote surfaces. Under the render sits a vector Nokta shaped to fit
- * inside the render's silhouette: where a surface scrubs <image> it still shows a face.
+ * Nokta as an SVG for the remote surfaces. The render is the picture; under it sits a vector Nokta shaped
+ * to fit inside the render's silhouette, so where a surface drops <image> there is still a face.
+ * Motion is SMIL: it needs no script and no state, and where it does not run the picture is simply still.
  */
 export function avatarSvg(o: AvatarOptions): string {
+  const m = MOOD[o.mood]
   const fill = BODY_FILL[o.look.color] ?? BODY_FILL['clay'] ?? '#E8A07E'
   const ink = o.look.color === 'ink' ? '#F3EEE6' : '#3A2A22'
   const [cx, cy, r] = o.disc ?? [0.5, 0.56, 0.3]
   const R = r * 100
-  const title = xml(`${o.look.name}: ${MOOD[o.mood].label}`)
-  const bob = o.animated
-    ? `<animateTransform attributeName="transform" type="translate" values="0 0;0 -${o.mood === 'work' ? 3 : 1.6};0 0" dur="${o.mood === 'work' ? '0.9s' : o.mood === 'sleep' ? '3.6s' : '2.8s'}" repeatCount="indefinite"/>`
-    : ''
+  const title = xml(`${o.look.name}: ${m.label}`)
+  const id = `${o.size}${o.mood}`
+  const blink = BLINKS[o.mood]
+  const isBlinking = o.animated && o.blinkPng !== undefined && blink !== undefined
+  const frame = (png: string, extra: string): string =>
+    `<image x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" ${extra}` +
+    `href="data:image/png;base64,${png}" xlink:href="data:image/png;base64,${png}">`
   const image =
     o.png === undefined
       ? ''
-      : `<image x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${o.png}" xlink:href="data:image/png;base64,${o.png}"/>`
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100" width="${o.size}" height="${o.size}" role="img" aria-label="${title}">` +
-    `<title>${title}</title>` +
-    `<ellipse cx="50" cy="93" rx="${Math.max(14, R * 0.9).toFixed(1)}" ry="3.2" fill="#000" opacity="0.1"/>` +
-    `<g>${bob}` +
+      : frame(
+          o.png,
+          '',
+        ) +
+        (isBlinking
+          ? `<animate attributeName="opacity" calcMode="discrete" values="1;0;1" keyTimes="0;0.955;0.985" dur="${blink}s" repeatCount="indefinite"/>`
+          : '') +
+        '</image>'
+  const shut =
+    isBlinking && o.blinkPng !== undefined
+      ? frame(o.blinkPng, 'opacity="0" ') +
+        `<animate attributeName="opacity" calcMode="discrete" values="0;1;0" keyTimes="0;0.955;0.985" dur="${blink}s" repeatCount="indefinite"/></image>`
+      : ''
+  const glow = o.glow
+    ? `<radialGradient id="h${id}" cx="50%" cy="55%" r="50%"><stop offset="0%" stop-color="${m.color}" stop-opacity="0.34"/>` +
+      `<stop offset="68%" stop-color="${m.color}" stop-opacity="0.1"/><stop offset="100%" stop-color="${m.color}" stop-opacity="0"/></radialGradient>`
+    : ''
+  const ground =
+    `<radialGradient id="s${id}"><stop offset="0%" stop-color="#000" stop-opacity="0.3"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient>`
+  const content =
     `<g transform="translate(${(cx * 100).toFixed(1)} ${(cy * 100).toFixed(1)}) scale(${R.toFixed(1)})">` +
     `<circle r="1" fill="${fill}"/>${vectorFace(o.mood, ink)}</g>` +
     image +
-    badge(o.mood, o.animated) +
-    `</g></svg>`
+    shut +
+    badge(o.mood, o.animated)
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100" width="${o.size}" height="${o.size}" role="img" aria-label="${title}">` +
+    `<title>${title}</title><defs>${glow}${ground}</defs>` +
+    (o.glow ? `<circle cx="50" cy="56" r="49" fill="url(#h${id})"/>` : '') +
+    `<ellipse cx="50" cy="92" rx="${Math.max(18, R * 1.05).toFixed(1)}" ry="4.4" fill="url(#s${id})"/>` +
+    wrapMotion(o.mood, content, o.animated) +
+    `</svg>`
   )
 }

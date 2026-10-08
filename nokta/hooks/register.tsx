@@ -10,12 +10,13 @@ import type { Elements, EngineInterface, PluginOptions, Register, RenderSurface,
 
 import type { NoktaJob, NoktaLook, NoktaMood, NoktaStep, NoktaTodo } from '../types'
 import type { RasterPack } from './art'
-import { avatarSvg, b64decode, rasterCells } from './art'
+import { avatarSvg, b64decode, canBlink, rasterCells } from './art'
 import {
   ACCESSORIES,
   ACCESSORY_LABEL,
   BODIES,
   BODY_LABEL,
+  cleanNote,
   clip,
   COLORS,
   COLOR_LABEL,
@@ -26,6 +27,9 @@ import {
   fold,
   HELP,
   iconKey,
+  isSummon,
+  MAX_NOTES,
+  memoryText,
   MOOD,
   nextOf,
   normalizeLook,
@@ -35,7 +39,9 @@ import {
   personaText,
   riskNote,
   spinnerWord,
+  summonHint,
   titleOf,
+  withNote,
 } from './model'
 import type { PaneActions } from './view'
 import { bandRow, paneBody, statsLine } from './view'
@@ -56,6 +62,7 @@ const todosA = atom({ plugin: 'nokta', key: 'todos' } as const, [])
 const jobsA = atom({ plugin: 'nokta', key: 'jobs' } as const, [])
 const bandHiddenA = atom({ plugin: 'nokta', key: 'isBandHidden' } as const, false)
 const quietA = atom({ plugin: 'nokta', key: 'isQuiet' } as const, false)
+const notesA = atom({ plugin: 'nokta', key: 'notes' } as const, [])
 
 type Settings = {
   isPersona: boolean
@@ -65,6 +72,7 @@ type Settings = {
   isRiskNote: boolean
   isSound: boolean
   isKittyWanted: boolean
+  isMemory: boolean
   sleepMs: number
 }
 
@@ -77,18 +85,21 @@ let opt: Settings = {
   isRiskNote: true,
   isSound: false,
   isKittyWanted: false,
-  sleepMs: 8 * 60_000,
+  isMemory: true,
+  sleepMs: 20 * 60_000,
 }
 let lastActiveAt = -1
 let isTurnActive = false
 let isKitty = false
 let hasGreeted = false
 let blinks = 0
+let pets = 0
 let tick: Timer | undefined
 let tickMs = 1000
 let packOnce: Promise<RasterPack | undefined> | undefined
 const pngCache = new Map<string, string | undefined>()
 const cellCache = new Map<string, { cells: string; columns: number; rows: number }>()
+const svgCache = new Map<string, string>()
 
 function readSettings(options: PluginOptions): Settings {
   const band = options['band']
@@ -100,7 +111,8 @@ function readSettings(options: PluginOptions): Settings {
     isRiskNote: options['riskNotes'] !== false,
     isSound: options['sound'] === true,
     isKittyWanted: options['terminalImages'] === 'kitty',
-    sleepMs: Math.max(1, Number(options['sleepMinutes']) || 8) * 60_000,
+    isMemory: options['memory'] !== false,
+    sleepMs: Math.max(1, Number(options['sleepMinutes']) || 20) * 60_000,
   }
 }
 
@@ -154,18 +166,21 @@ function loadPack($: Dollar): Promise<RasterPack | undefined> {
   return packOnce
 }
 
-/** The render of a look in a mood as base64 PNG, or `undefined` where the file is not there. */
-async function loadPng($: Dollar, look: NoktaLook, mood: NoktaMood): Promise<string | undefined> {
-  const key = iconKey(look, mood)
+/** The render of a look in a mood as base64 PNG (the small one for the band), or `undefined` where the file is not there. */
+async function loadPng($: Dollar, look: NoktaLook, mood: NoktaMood, isSmall = false): Promise<string | undefined> {
+  const key = `${isSmall ? 's/' : ''}${iconKey(look, mood)}`
   if (pngCache.has(key)) return pngCache.get(key)
   let value: string | undefined
   try {
-    const file = await $.fs.read(`${$.plugin.root}/assets/icons/${key}.png`, { as: 'bytes' })
+    const file = await $.fs.read(
+      `${$.plugin.root}/assets/${isSmall ? 'icons-s' : 'icons'}/${iconKey(look, mood)}.png`,
+      { as: 'bytes' },
+    )
     value = isRecord(file) && typeof file['base64'] === 'string' ? file['base64'] : undefined
   } catch {
     value = undefined
   }
-  if (pngCache.size > 24) pngCache.clear()
+  if (pngCache.size > 40) pngCache.clear()
   pngCache.set(key, value)
   return value
 }
@@ -220,25 +235,36 @@ async function avatarFor(
       </Text>
     )
   }
+  // A still SVG, not an "interactive" one: the surface draws that kind in a sandboxed frame with a white
+  // background that also refuses the render's <image>. Motion is SMIL inside the SVG, and where the
+  // surface does not run it the picture is simply still.
   const { Svg } = table as Elements['desktop']
-  const [png, pack] = await Promise.all([loadPng($, look, mood), loadPack($)])
-  const px = size === 'pane' ? 132 : 26
-  return (
-    <Svg
-      source={avatarSvg({
-        look,
-        mood,
-        png,
-        disc: pack?.disc[iconKey(look, mood)],
-        size: px,
-        animated: size === 'pane',
-      })}
-      alt={`${look.name}: ${m.label}`}
-      width={px}
-      height={px}
-      isInteractive={size === 'pane'}
-    />
-  )
+  const isBig = size === 'pane'
+  const [png, blinkPng, pack] = await Promise.all([
+    loadPng($, look, mood, !isBig),
+    isBig && canBlink(mood) ? loadPng($, look, 'sleep') : Promise.resolve(undefined),
+    loadPack($),
+  ])
+  const px = isBig ? 184 : 44
+  const cacheKey = `${iconKey(look, mood)}|${size}|${look.name}`
+  let source = png === undefined ? undefined : svgCache.get(cacheKey)
+  if (source === undefined) {
+    source = avatarSvg({
+      look,
+      mood,
+      png,
+      blinkPng,
+      disc: pack?.disc[iconKey(look, mood)],
+      size: px,
+      animated: true,
+      glow: isBig,
+    })
+    if (png !== undefined) {
+      if (svgCache.size > 24) svgCache.clear()
+      svgCache.set(cacheKey, source)
+    }
+  }
+  return <Svg source={source} alt={`${look.name}: ${m.label}`} width={px} height={px} />
 }
 
 // ------------------------------------------------------------------ state and display
@@ -321,6 +347,60 @@ async function toggleBand($: Dollar): Promise<boolean> {
   return next
 }
 
+/** Keeps a note (the person's, or one the model proposed); says what became of it. */
+async function remember($: Dollar, text: string): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+  const cleaned = cleanNote(text)
+  if (!cleaned.ok) return cleaned
+  await saveNotes($, withNote(await read($, notesA), cleaned.text))
+  return cleaned
+}
+
+async function saveNotes($: Dollar, notes: string[]): Promise<void> {
+  await update($, notesA, () => notes)
+  await $.store.set('notes', notes)
+}
+
+/** Drops one note (by its place in the list); resolves what it said, or nothing for a place that is not there. */
+async function forgetNote($: Dollar, index: number): Promise<string | undefined> {
+  const notes = await read($, notesA)
+  const gone = notes[index]
+  if (gone === undefined) return undefined
+  await saveNotes(
+    $,
+    notes.filter((_, i) => i !== index),
+  )
+  return gone
+}
+
+function readNotes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const notes: string[] = []
+  for (const item of raw) {
+    const cleaned = typeof item === 'string' ? cleanNote(item) : undefined
+    if (cleaned?.ok === true) notes.push(cleaned.text)
+  }
+  return notes.slice(-MAX_NOTES)
+}
+
+const PET_LINES = ['Hıh! Bunu sevdim.', 'Teşekkürler, iyi geldi.', 'Çok güzel hissettirdi.', 'Hadi, bir şeye başlayalım mı?']
+
+/** Nokta is petted: it perks up for a moment. */
+async function pet($: Dollar, isSilent: boolean): Promise<string> {
+  await touch($)
+  pets += 1
+  const look = await read($, lookA)
+  const line = PET_LINES[pets % PET_LINES.length] ?? 'Hıh!'
+  await showMood($, 'happy', 'sevildi')
+  if (!isSilent) await say($, 'happy', `${look.name}: ${line}`, 2500)
+  await chime($, 'done')
+  $.clock.after(3500, () => {
+    void safe(async () => {
+      if (!isTurnActive && (await read($, moodA)) === 'happy') await showMood($, 'neutral', '')
+    })
+  })
+  return line
+}
+
 function actions($: Dollar): PaneActions {
   return {
     cycleBody: () =>
@@ -337,6 +417,12 @@ function actions($: Dollar): PaneActions {
       await toggleBand($)
     },
     close: () => $.ui.close({ id: PANE }),
+    pet: async () => {
+      await pet($, false)
+    },
+    forget: async index => {
+      await forgetNote($, index)
+    },
   }
 }
 
@@ -358,7 +444,7 @@ async function welcome($: Dollar, surface: RenderSurface | null): Promise<void> 
       $,
       seen === true
         ? `${look.name} burada.`
-        : `Merhaba, ben ${look.name}! Panelimi /nokta ile açabilirsin; /nokta yardım komutları gösterir.`,
+        : `Merhaba, ben ${look.name}! Bana adımla seslenebilirsin; panelim /nokta ile açılır.`,
       seen === true ? 3000 : 6000,
     )
   }
@@ -393,11 +479,11 @@ const HEADLESS_NOTE =
 
 /** What the session starts with: the saved look, the preferences, the history, the command. */
 async function begin($: Dollar, isInteractive: boolean): Promise<void> {
-  const [savedLook, savedPrefs, savedJobs, seen, surfaces] = await Promise.all([
+  const [savedLook, savedPrefs, savedJobs, savedNotes, surfaces] = await Promise.all([
     $.store.get('look'),
     $.store.get('prefs'),
     $.store.get('jobs'),
-    $.store.get('seen'),
+    $.store.get('notes'),
     $.session.surfaces(),
   ])
   const look = normalizeLook(isRecord(savedLook) ? (savedLook as Partial<NoktaLook>) : undefined)
@@ -409,6 +495,7 @@ async function begin($: Dollar, isInteractive: boolean): Promise<void> {
   if ((await read($, jobsA)).length === 0) {
     await update($, jobsA, () => readJobs(savedJobs))
   }
+  await update($, notesA, () => readNotes(savedNotes))
   await touch($)
 
   const term = (await $.env.get('TERM')) ?? ''
@@ -421,6 +508,21 @@ async function begin($: Dollar, isInteractive: boolean): Promise<void> {
     description: `${look.name}: durumu, görünümü ve işleri (panel, ad, gövde, renk, sessiz)`,
     argumentHint: '[durum|ad|gövde|renk|aksesuar|sessiz|bant|yardım]',
   })
+
+  if (opt.isMemory) {
+    // the model asks to remember; the engine's own dialog asks the person; Nokta keeps the line
+    await $.tool.register({
+      name: 'remember',
+      description:
+        "Kullanıcının kalıcı bir tercihini ya da bilgisini Nokta'nın hafızasına tek cümleyle kaydeder (sonraki oturumlarda da hatırlanır). Yalnızca kullanıcı açıkça söylediği kalıcı şeyler için; geçici istekler, sırlar, parolalar, anahtarlar için ASLA.",
+      inputSchema: {
+        type: 'object',
+        properties: { note: { type: 'string', description: 'Tek cümle, en çok 200 karakter.' } },
+        required: ['note'],
+      },
+      isDeferred: false,
+    })
+  }
 
   await showMood($, 'neutral', '')
 
@@ -671,6 +773,24 @@ export const register: Register = (on, options) => {
     }
   }).catch(($, e, next) => next(e))
 
+  // The person calls Nokta by its name alone: it is the one being spoken to, not a command to explain.
+  on('prompt.submit', async ($, e, next) => {
+    const look = await read($, lookA)
+    if (!isSummon(e.text, look.name)) return next(e)
+    await safe(() => touch($))
+    const last = (await read($, jobsA)).find(job => job.status !== 'run')
+    return next({ ...e, context: [...(e.context ?? []), summonHint(look.name, last)] })
+  }).catch(($, e, next) => next(e))
+
+  // What the model proposes to remember (declared in begin()); the engine's dialog asks the person first.
+  // It is registered after the generic hook above, so that one still sees the call as a step.
+  on('tool.call', { tool: 'mcp__nokta__remember' }, async ($, e) => {
+    const said = (e as unknown as Record<string, unknown>)['note']
+    const kept = await remember($, typeof said === 'string' ? said : '')
+    if (kept.ok) await safe(() => say($, 'happy', `Nokta hatırladı: ${kept.text}`))
+    return { result: kept.ok ? `Kaydedildi: ${kept.text}` : `Kaydedilmedi: ${kept.reason}` }
+  }).catch(($, e, next) => next(e))
+
   // A dialog is about to ask the person: Nokta raises a hand. (The engine's verdict "ask" is not the
   // signal: a mode that approves for itself settles it without anyone being asked. Nothing tells us
   // when they answer; the hand comes down when the call returns.)
@@ -681,14 +801,16 @@ export const register: Register = (on, options) => {
 
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    if (!opt.isPersona) return composed
-    const look = await read($, lookA)
-    return {
-      sections: [
-        ...composed.sections,
-        { id: 'nokta:persona', text: personaText(look.name), scope: 'session' as const },
-      ],
+    const sections = [...composed.sections]
+    if (opt.isPersona) {
+      const look = await read($, lookA)
+      sections.push({ id: 'nokta:persona', text: personaText(look.name, opt.isMemory), scope: 'session' as const })
     }
+    if (opt.isMemory) {
+      const notes = await read($, notesA)
+      if (notes.length > 0) sections.push({ id: 'nokta:memory', text: memoryText(notes), scope: 'session' as const })
+    }
+    return { sections }
   })
 
   on('command.run', { command: 'nokta' }, async ($, e) => {
@@ -717,6 +839,39 @@ export const register: Register = (on, options) => {
     }
     if (sub === 'durum' || sub === 'status') {
       return { text: await statusText($, look) }
+    }
+    if (sub === 'sev' || sub === 'pet') {
+      const line = await pet($, true)
+      return { text: `${MOOD.happy.face} ${look.name}: ${line}` }
+    }
+    if (sub === 'hatirla' || sub === 'remember') {
+      if (!opt.isMemory) return { text: 'Hafıza kapalı (ayar: memory).' }
+      if (arg === '') return { text: 'Neyi hatırlayayım? Örnek: /nokta hatırla testleri make t ile çalıştırırız' }
+      const kept = await remember($, arg)
+      return { text: kept.ok ? `Hatırlayacağım: ${kept.text}` : kept.reason }
+    }
+    if (sub === 'hafiza' || sub === 'memory' || sub === 'notlar') {
+      const notes = await read($, notesA)
+      return {
+        text:
+          notes.length === 0
+            ? 'Henüz bir şey hatırlamıyorum. Örnek: /nokta hatırla hep Türkçe yaz'
+            : `Hatırladıklarım:\n${notes.map((note, i) => `  ${i + 1}. ${note}`).join('\n')}\n\nSilmek için: /nokta unut <no> ya da /nokta unut hepsi`,
+      }
+    }
+    if (sub === 'unut' || sub === 'forget') {
+      const which = fold(arg)
+      if (which === 'hepsi' || which === 'tumu' || which === 'all') {
+        await saveNotes($, [])
+        return { text: 'Hepsini unuttum.' }
+      }
+      const gone = await forgetNote($, Number(which) - 1)
+      return {
+        text:
+          gone === undefined
+            ? 'Hangisini? /nokta hafıza ile numaralara bak, sonra /nokta unut <no> yaz.'
+            : `Unuttum: ${gone}`,
+      }
     }
     if (sub === 'ad' || sub === 'isim' || sub === 'name') {
       if (arg === '') return { text: `Adım şu an ${look.name}. Değiştirmek için: /nokta ad <yeni ad>` }
@@ -769,7 +924,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const U = $.ui.resolve(e)
     const { Text } = U
-    const [look, mood, detail, steps, todos, jobs, isQuiet, isBandHidden] = await Promise.all([
+    const [look, mood, detail, steps, todos, jobs, isQuiet, isBandHidden, notes] = await Promise.all([
       read($, lookA),
       read($, moodA),
       read($, detailA),
@@ -778,6 +933,7 @@ export const register: Register = (on, options) => {
       read($, jobsA),
       read($, quietA),
       read($, bandHiddenA),
+      read($, notesA),
     ])
     const now = await $.clock.now()
     const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
@@ -794,6 +950,8 @@ export const register: Register = (on, options) => {
         steps,
         todos,
         jobs,
+        notes,
+        isMemory: opt.isMemory,
         elapsed: run === undefined ? 0 : Math.max(0, (now - run.startedAt) / 1000),
         columns: e.props.bodyColumns,
         rows,
@@ -815,11 +973,26 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     const U = $.ui.resolve(e)
-    const [look, detail] = await Promise.all([read($, lookA), read($, detailA)])
+    const [look, detail, jobs] = await Promise.all([read($, lookA), read($, detailA), read($, jobsA)])
+    const now = await $.clock.now()
+    const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
     const face = await avatarFor($, U, e.surface, look, mood, 'band')
-    return bandRow(U, { look, mood, detail, columns: e.props.bodyColumns }, face, async () => {
-      await openPane($)
-    })
+    return bandRow(
+      U,
+      {
+        look,
+        mood,
+        detail,
+        elapsed: run === undefined ? 0 : Math.max(0, (now - run.startedAt) / 1000),
+        tools: run?.tools ?? 0,
+        note: statsLine({ mood, elapsed: run === undefined ? 0 : (now - run.startedAt) / 1000, jobs }),
+        columns: e.props.bodyColumns,
+      },
+      face,
+      async () => {
+        await openPane($)
+      },
+    )
   })
 
   // Turkish words for the spinner line, with Nokta's name in them. (On the desktop the word says

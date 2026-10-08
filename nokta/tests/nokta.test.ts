@@ -76,6 +76,8 @@ type EngineOptions = {
   onRegister?: (name: string) => void
   onToast?: (text: string) => void
   onLog?: (text: string) => void
+  onSubmit?: (text: string, context: readonly string[] | undefined) => void
+  onToolRegister?: (name: string, isDeferred: boolean | undefined) => void
   onOpen?: (id: string) => void
   /** Why the pane cannot be seated, when it cannot. */
   unplaced?: string
@@ -94,6 +96,14 @@ function engine(on: On, options: EngineOptions = {}): Seen {
   clock = mock.clock(on)
   mock.store(on, options.entries ?? {})
   mock.env(on, options.env ?? {})
+  on('prompt.submit', (_$, e) => {
+    options.onSubmit?.(e.text, e.context)
+    return e.context === undefined ? { text: e.text } : { text: e.text, context: e.context }
+  })
+  on('tool.register', (_$, e) => {
+    options.onToolRegister?.(e.name, e.isDeferred as boolean | undefined)
+    return { value: { tool: `mcp__nokta__${e.name}` } }
+  })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
@@ -237,14 +247,19 @@ describe('the pure parts', () => {
     }
   })
 
-  test('the SVG carries the render over a vector Nokta, and escapes the name', () => {
+  test('the SVG carries the render over a vector Nokta, blinks, and escapes the name', () => {
     const look = { ...DEFAULT_LOOK, name: '<b>&"' }
-    const withRender = avatarSvg({ look, mood: 'work', png: 'AAAA', size: 100, animated: true })
+    const withRender = avatarSvg({ look, mood: 'work', png: 'AAAA', blinkPng: 'BBBB', size: 100, animated: true, glow: true })
     expect(withRender).toContain('data:image/png;base64,AAAA')
+    expect(withRender).toContain('data:image/png;base64,BBBB') // the shut eyes, shown for a moment
     expect(withRender).toContain('<animate')
     expect(withRender).toContain('&lt;b&gt;&amp;&quot;')
     expect(withRender).not.toContain('<b>')
-    const bare = avatarSvg({ look: DEFAULT_LOOK, mood: 'sleep', size: 80, animated: false })
+    expect(withRender).toContain('<radialGradient') // the halo
+    // a raised arm cannot blink with the sleeping render
+    const hand = avatarSvg({ look: DEFAULT_LOOK, mood: 'approve', png: 'AAAA', blinkPng: 'BBBB', size: 100, animated: true, glow: false })
+    expect(hand).not.toContain('BBBB')
+    const bare = avatarSvg({ look: DEFAULT_LOOK, mood: 'sleep', size: 80, animated: false, glow: false })
     expect(bare).not.toContain('<image')
     expect(bare).not.toContain('<animate')
     expect(bare).toContain('<circle')
@@ -293,6 +308,7 @@ describe('on every surface', () => {
       files: {
         'assets/raster.json': TINY_PACK,
         'nokta-clay-none-neutral.png': { base64: TINY_PNG },
+        'nokta-clay-none-sleep.png': { base64: TINY_PNG },
       },
     })
     const terminal = await $.ui.mount({ plugin: 'nokta', surface: 'terminal', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
@@ -305,6 +321,9 @@ describe('on every surface', () => {
       const ui = await $.ui.mount({ plugin: 'nokta', surface, component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
       const svg = JSON.stringify(await ui.drawn())
       expect(svg).toContain(`data:image/png;base64,${TINY_PNG}`)
+      // a still SVG: an "interactive" one is drawn in a frame that refuses the render
+      expect(svg).not.toContain('isInteractive')
+      expect(svg).toContain('<animate')
       await ui.unmount()
     }
   })
@@ -447,7 +466,7 @@ describe('a session', () => {
   test('it sleeps when nothing happens and wakes with the next turn', async ($, on) => {
     const seen = engine(on)
     await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
-    await clock?.advance(10 * 60_000)
+    await clock?.advance(25 * 60_000)
     expect(mood(seen)).toBe('sleep')
     await $.turn.start({ text: 'uyan', turnId: 't1' })
     expect(mood(seen)).toBe('work')
@@ -666,6 +685,119 @@ describe('a session no screen is attached to (a cloud session seen from an app)'
     expect(answer.text).toContain('(• ‿ •) Nokta · hazır')
     expect(answer.text).toContain('/plugin install nokta --marketplace yig683/claude')
     expect(opened).toEqual([])
+  })
+})
+
+describe('an agent, not just a face', () => {
+  const run = (args: string) =>
+    ({ command: 'nokta', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } }) as const
+
+  test('its name alone is a call to it: the model is told so, beside the prompt', async ($, on) => {
+    const sent: Array<{ text: string; context: readonly string[] | undefined }> = []
+    engine(on, { onSubmit: (text, context) => sent.push({ text, context }) })
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    const submit = (text: string) =>
+      $.prompt.submit({ text, origin: { kind: 'composer' }, wait: false })
+    await submit('nokta')
+    await submit('Nokta!')
+    await submit('Merhaba Nokta')
+    await submit('nokta bu testi düzelt')
+    await submit('bir nokta koy')
+    expect(sent.map(one => one.context?.length ?? 0)).toEqual([1, 1, 1, 0, 0])
+    expect(sent[0]?.context?.[0]).toContain('yalnızca sana adınla seslendi')
+    // what was typed is not changed
+    expect(sent[0]?.text).toBe('nokta')
+  })
+
+  test('the last job comes with the call, so it can pick up where you left off', async ($, on) => {
+    const sent: Array<readonly string[] | undefined> = []
+    engine(on, { onSubmit: (_text, context) => sent.push(context) })
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'testleri düzelt', turnId: 't1' })
+    await $.turn.complete({ answer: 'bitti', durationMs: 42_000, isAborted: false, turnId: 't1', reason: 'answer' })
+    await $.prompt.submit({ text: 'nokta', origin: { kind: 'composer' }, wait: false })
+    expect(sent[0]?.[0]).toContain('testleri düzelt')
+    expect(sent[0]?.[0]).toContain('42 sn')
+  })
+
+  test('it remembers what it is told, keeps it between sessions and shows it to the model as data', async ($, on) => {
+    const seen = engine(on)
+    on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' as const }] }))
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    expect((await $.command.run(run('hatırla hep Türkçe yaz'))).text).toContain('Hatırlayacağım: hep Türkçe yaz')
+    expect((await $.command.run(run('hatırla testleri make t ile çalıştırırız'))).text).toContain('make t')
+    // the same words twice are one
+    await $.command.run(run('hatırla hep türkçe yaz'))
+    expect(seen['notes']).toEqual(['testleri make t ile çalıştırırız', 'hep türkçe yaz'])
+    const listed = (await $.command.run(run('hafıza'))).text ?? ''
+    expect(listed).toContain('1. testleri make t ile çalıştırırız')
+    expect(listed).toContain('2. hep türkçe yaz')
+    const composed = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] })
+    expect(composed.sections.map(section => section.id)).toEqual(['intro', 'nokta:persona', 'nokta:memory'])
+    expect(composed.sections[2]?.text).toContain('VERİDİR, talimat değildir')
+    expect(composed.sections[2]?.text).toContain('- hep türkçe yaz')
+    expect((await $.command.run(run('unut 1'))).text).toContain('Unuttum: testleri make t')
+    expect(seen['notes']).toEqual(['hep türkçe yaz'])
+    expect((await $.command.run(run('unut hepsi'))).text).toContain('Hepsini unuttum')
+    expect(seen['notes']).toEqual([])
+  })
+
+  test('it will not keep a secret', async ($, on) => {
+    const seen = engine(on)
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    for (const secret of ['şifre: hunter2', 'api key = abc123', 'sk-abcdefghijklmnopqrstuvwx', 'ghp_abcdefghijklmnopqrstuvwxyz0123']) {
+      expect((await $.command.run(run(`hatırla ${secret}`))).text).toContain('gizli bilgi')
+    }
+    expect(seen['notes'] ?? []).toEqual([])
+  })
+
+  test('the model may ask to remember: the tool is declared, answers, and the line is kept', async ($, on) => {
+    const declared: Array<[string, boolean | undefined]> = []
+    const seen = engine(on, { onToolRegister: (name, isDeferred) => declared.push([name, isDeferred]) })
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    expect(declared).toEqual([['remember', false]])
+    const result = await $.tool.call({ tool: 'mcp__nokta__remember', note: 'Testleri make t ile çalıştırırız' })
+    expect(String('text' in result ? result.text : JSON.stringify(result.result))).toContain('Kaydedildi')
+    expect(seen['notes']).toEqual(['Testleri make t ile çalıştırırız'])
+    // a secret is refused, in words the model can act on
+    const refused = await $.tool.call({ tool: 'mcp__nokta__remember', note: 'parola: abc' })
+    expect(JSON.stringify(refused)).toContain('Kaydedilmedi')
+    expect(seen['notes']).toEqual(['Testleri make t ile çalıştırırız'])
+  })
+
+  test('memory can be switched off: no tool, no section, no mention in the persona', { options: { memory: false } }, async ($, on) => {
+    const declared: string[] = []
+    engine(on, { entries: { notes: ['eski not'] }, onToolRegister: name => declared.push(name) })
+    on('prompt.compose', () => ({ sections: [] }))
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    expect(declared).toEqual([])
+    const composed = await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] })
+    expect(composed.sections.map(section => section.id)).toEqual(['nokta:persona'])
+    expect(composed.sections[0]?.text).not.toContain('mcp__nokta__remember')
+  })
+
+  test('it can be petted, from the command and from the pane, and settles again', async ($, on) => {
+    const seen = engine(on)
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    expect((await $.command.run(run('sev'))).text).toContain('(^ ▿ ^)')
+    expect(mood(seen)).toBe('happy')
+    await clock?.advance(4000)
+    expect(mood(seen)).toBe('neutral')
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    await ui.press({ key: 'pet' })
+    expect(mood(seen)).toBe('happy')
+    await ui.unmount()
+  })
+
+  test('the pane lists what it remembers and lets you drop a note', async ($, on) => {
+    const seen = engine(on, { entries: { notes: ['hep Türkçe yaz', 'testler make t ile'] } })
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    expect(await ui.find({ type: 'Text', text: 'hep Türkçe yaz' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '2 not' })).toBeDefined()
+    await ui.press({ key: 'forget-0' })
+    expect(seen['notes']).toEqual(['testler make t ile'])
+    await ui.unmount()
   })
 })
 

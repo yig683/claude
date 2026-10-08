@@ -15,6 +15,8 @@ export type PaneData = {
   steps: readonly NoktaStep[]
   todos: readonly NoktaTodo[]
   jobs: readonly NoktaJob[]
+  /** What Nokta remembers, newest last. */
+  notes: readonly string[]
   /** Seconds the running turn has taken; 0 when none runs. */
   elapsed: number
   /** Cells across the body and rows the pane may take. */
@@ -25,6 +27,7 @@ export type PaneData = {
   isQuiet: boolean
   isBandHidden: boolean
   isTerminal: boolean
+  isMemory: boolean
 }
 
 export type PaneActions = {
@@ -34,6 +37,8 @@ export type PaneActions = {
   toggleQuiet: () => Promise<void>
   toggleBand: () => Promise<void>
   close: () => Promise<void>
+  pet: () => Promise<void>
+  forget: (index: number) => Promise<void>
 }
 
 const STEP_GLYPH = { run: '●', ok: '✓', err: '✗' } as const
@@ -42,12 +47,15 @@ const TODO_GLYPH = { pending: '☐', in_progress: '◐', completed: '☑' } as c
 const JOB_GLYPH = { run: '●', ok: '✓', err: '✗', stop: '■' } as const
 const JOB_COLOR = { run: 'claude', ok: 'success', err: 'error', stop: 'warning' } as const
 
-function Heading(U: Common, text: string): JSX.Element {
-  const { Text } = U
+function Heading(U: Common, text: string, extra?: string): JSX.Element {
+  const { Box, Text } = U
   return (
-    <Text bold dimColor>
-      {text}
-    </Text>
+    <Box flexDirection="row" gap={1}>
+      <Text bold dimColor>
+        {text}
+      </Text>
+      {extra !== undefined && <Text dimColor>{extra}</Text>}
+    </Box>
   )
 }
 
@@ -65,21 +73,26 @@ export function statsLine(d: Pick<PaneData, 'mood' | 'elapsed' | 'jobs'>): strin
 export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Element): JSX.Element {
   const { Box, Text, Button } = U
   const m = MOOD[d.mood]
-  const isWide = !d.isCompact && d.columns >= 56
+  // beside the picture on a wide terminal; everywhere else the picture sits on top, centred
+  const isSideBySide = d.isTerminal && !d.isCompact && d.columns >= 56
   const room = d.isCompact ? 3 : Math.max(3, Math.min(8, d.rows - 24))
   const steps = d.steps.slice(-room)
   const todos = d.todos.slice(0, d.isCompact ? 3 : 6)
   const jobs = d.jobs.slice(0, d.isCompact ? 2 : 5)
+  const notes = d.notes.slice(-(d.isCompact ? 2 : 5))
+  const firstNote = d.notes.length - notes.length
   const titleWidth = Math.max(16, d.columns - 22)
+  const detail =
+    d.detail === '' || d.mood === 'neutral' || d.mood === 'sleep' ? '' : clip(d.detail, Math.max(12, d.columns - 8))
 
   const identity = (
-    <Box flexDirection="column" flexGrow={1}>
+    <Box flexDirection="column" flexGrow={isSideBySide ? 1 : 0} alignItems={isSideBySide ? 'flex-start' : 'center'}>
       <Text bold>{d.look.name}</Text>
       <Text color={m.color} bold>
         {m.face} {m.label}
       </Text>
       <Text dimColor wrap="truncate-end">
-        {d.detail === '' || d.mood === 'neutral' || d.mood === 'sleep' ? ' ' : clip(d.detail, Math.max(12, d.columns - 28))}
+        {detail === '' ? ' ' : detail}
       </Text>
       <Text dimColor wrap="truncate-end">
         {statsLine(d)}
@@ -102,7 +115,7 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
             {statsLine(d)}
           </Text>
         </Box>
-      ) : isWide ? (
+      ) : isSideBySide ? (
         <Box flexDirection="row" gap={2} alignItems="center">
           {avatar}
           {identity}
@@ -111,6 +124,7 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
         <Box flexDirection="column" alignItems="center">
           {avatar}
           {identity}
+          <Button key="pet" plain hotkey="v" label="♡ Nokta'yı sev" onPress={a.pet} />
         </Box>
       )}
 
@@ -138,6 +152,31 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
               <Text wrap="truncate-end" dimColor={todo.status === 'completed'} strikethrough={todo.status === 'completed'}>
                 {clip(todo.text, Math.max(12, d.columns - 4))}
               </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {d.isMemory && (
+        <Box flexDirection="column">
+          {Heading(U, 'Hafıza', d.notes.length === 0 ? undefined : `${d.notes.length} not`)}
+          {notes.length === 0 && (
+            <Text dimColor wrap="wrap">
+              Henüz bir şey hatırlamıyorum. Söyle ya da yaz: /nokta hatırla hep Türkçe yaz
+            </Text>
+          )}
+          {notes.map((note, i) => (
+            <Box flexDirection="row" gap={1}>
+              <Text color="claude">•</Text>
+              <Text wrap="truncate-end">{clip(note, Math.max(12, d.columns - 10))}</Text>
+              <Box flexGrow={1} />
+              <Button
+                key={`forget-${firstNote + i}`}
+                plain
+                dimColor
+                label="×"
+                onPress={() => a.forget(firstNote + i)}
+              />
             </Box>
           ))}
         </Box>
@@ -205,6 +244,7 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
             label={`Bant: ${d.isBandHidden ? 'gizli' : 'açık'}`}
             onPress={a.toggleBand}
           />
+          {isSideBySide && <Button key="pet" plain hotkey="v" label="♡ Sev" onPress={a.pet} />}
           <Button key="close" plain hotkey="k" dimColor label="Kapat" onPress={a.close} />
         </Box>
       </Box>
@@ -216,6 +256,11 @@ export type BandData = {
   look: NoktaLook
   mood: NoktaMood
   detail: string
+  /** Seconds the running turn has taken; 0 when none runs. */
+  elapsed: number
+  tools: number
+  /** What to say on the second line when nothing is going on (how the last job went, or that it rests). */
+  note: string
   columns: number
 }
 
@@ -228,17 +273,38 @@ export function bandRow(
   const { Box, Text, Button } = U
   const m = MOOD[d.mood]
   const isNarrow = d.columns < 64
+  const isBusy = d.mood === 'work' || d.mood === 'ask' || d.mood === 'approve'
   const detail =
     d.detail === '' || d.mood === 'neutral' || d.mood === 'sleep'
       ? ''
-      : clip(d.detail, Math.max(10, d.columns - 36))
+      : clip(d.detail, Math.max(10, d.columns - (face === undefined ? 36 : 30)))
+  const timing = isBusy && d.elapsed > 0 ? `${fmtDuration(d.elapsed)} · ${d.tools} araç` : ''
+  // with a picture the band is two lines (name and mood over what it does); without, one line
+  if (face !== undefined) {
+    return (
+      <Box flexDirection="row" gap={1} alignItems="center">
+        {face}
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Text bold>{d.look.name}</Text>
+            <Text color={m.color} bold>
+              {m.label}
+            </Text>
+          </Box>
+          <Text dimColor wrap="truncate-end">
+            {detail !== '' ? (timing === '' ? detail : `${detail} · ${timing}`) : timing === '' ? clip(d.note, 60) : timing}
+          </Text>
+        </Box>
+        <Box flexGrow={1} />
+        <Button key="panel" plain dimColor label="panel" onPress={onPanel} />
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="row" gap={1} alignItems="center">
-      {face ?? (
-        <Text color={m.color} bold>
-          {m.face}
-        </Text>
-      )}
+      <Text color={m.color} bold>
+        {m.face}
+      </Text>
       <Text bold>{d.look.name}</Text>
       <Text color={m.color}>{m.label}</Text>
       {!isNarrow && detail !== '' && (
