@@ -1,6 +1,6 @@
 # Nokta
 
-Claude Code'un içinde yaşayan, yüzü olan karakter. Oturumda ne olduğunu yüzüyle gösterir: çalışırken kaş çatar, onay beklerken el kaldırır, iş bitince sevinir, sorun olunca endişelenir, boşta kalınca uyur.
+Claude Code'un içinde yaşayan, yüzü olan, hareket eden 3B karakter. Oturumda ne olduğunu yüzüyle ve hareketiyle gösterir: çalışırken kaş çatar, onay beklerken el sallar, iş bitince zıplar, sorun olunca endişelenir, boştayken nefes alır ve göz kırpar, boşta kalınca uyur.
 
 ## Kurulum
 
@@ -29,6 +29,7 @@ Bulut oturumlarında (telefon, web) ekran çizen bir yüzey bağlı olmadığı 
 /nokta gövde tavşan        nokta | bulut | tavşan | üçgen
 /nokta renk adaçayı        kil | gök | adaçayı | kraft | mürekkep (yalnızca Nokta gövdesi)
 /nokta aksesuar bere       yok | gözlük | bere | papyon (yalnızca Nokta gövdesi)
+/nokta hareket             hareketi aç/kapat
 /nokta sessiz              bildirim ve sesleri aç/kapat
 /nokta bant                bandı ve durum satırını göster/gizle
 /nokta kapat               paneli kapat
@@ -37,7 +38,7 @@ Bulut oturumlarında (telefon, web) ekran çizen bir yüzey bağlı olmadığı 
 
 Adıyla da seslenebilirsin: "Nokta", "Merhaba Nokta", "Nokta, şunu yap".
 
-Ayarlar (`/config` menüsünde): `persona`, `band`, `autoOpen`, `greet`, `riskNotes`, `messages`, `memory`, `sound`, `terminalImages`, `sleepMinutes`.
+Ayarlar (`/config` menüsünde): `persona`, `band`, `autoOpen`, `greet`, `riskNotes`, `messages`, `motion`, `memory`, `sound`, `sleepMinutes`.
 
 Tüm ayrıntılar, sınırlar ve resimler depo kökündeki [README](../README.md) dosyasında.
 
@@ -46,14 +47,15 @@ Tüm ayrıntılar, sınırlar ve resimler depo kökündeki [README](../README.md
 ```
 .claude-plugin/plugin.json   bildirim ve userConfig
 hooks/hooks.json             tek modül: register.tsx
-hooks/register.tsx           kancalar; `$` kullanan her şey burada
+hooks/register.tsx           kancalar ve animasyon saati; `$` kullanan her şey burada
+hooks/motion.ts              yönetmen: hangi resim, nasıl hareket; yüzen şeyler
+hooks/art.ts                 resimleri SVG'ye ve terminal hücrelerine çevirir
+hooks/gfx.ts                 SVG üreten küçük sahne ağacı
 hooks/model.ts               saf mantık
-hooks/art.ts                 saf çizim: hücreler, SVG
 hooks/view.tsx               panel ve bant ağaçları
 types/index.d.ts             $.state sözleşmesi (nokta.*)
-assets/icons/                224 px şeffaf 3B görseller (gövde-renk-aksesuar-ruhhali.png)
-assets/icons-s/              96 px aynıları (bant)
-assets/raster.json           terminal hücreleri için küçük RGBA resimler, vektör yedek daireleri
+assets/looks/                her görünümün 25 resmi (gövde-renk-aksesuar.json)
+assets/props.json            yüzen küçük 3B şeyler
 assets/sounds/               onay, bitiş, hata
 tests/nokta.test.ts          claude plugin test
 ```

@@ -3,15 +3,18 @@ import type { MockClock } from 'claude-code/testing'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 import type { NoktaJob, NoktaLook, NoktaMood, NoktaStep, NoktaTodo } from '../types'
-import { avatarSvg, b64decode, b64encode, heroSvg, rasterCells } from '../hooks/art'
+import { avatarSvg, b64decode, b64encode, heroSvg, isPack, isSprites, rasterCells, terminalCells, type FramePack } from '../hooks/art'
 import {
+  ACCESSORIES,
+  BODIES,
+  COLORS,
+  DEFAULT_COLOR,
   DEFAULT_LOOK,
   MOOD,
   describeTool,
   fmtDuration,
   fold,
   groupSteps,
-  iconKey,
   normalizeLook,
   parseAccessory,
   parseBody,
@@ -20,22 +23,27 @@ import {
   riskNote,
   spinnerWord,
   titleOf,
+  withBody,
 } from '../hooks/model'
+import { FRAMES, blendShots, shotOf } from '../hooks/motion'
 
 const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
+const MOODS = Object.keys(MOOD) as NoktaMood[]
 
-// a 2 x 2 picture and a 1 x 1 PNG stand in for the shipped renders
-const TINY_PACK = JSON.stringify({
-  width: 2,
-  height: 2,
-  rgba: {
-    'nokta-clay-none-neutral': b64encode(Uint8Array.from([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 0])),
-    'nokta-clay-none-sleep': b64encode(Uint8Array.from([255, 255, 0, 255, 0, 255, 255, 255, 0, 0, 0, 255, 0, 0, 0, 0])),
-  },
-  disc: { 'nokta-clay-none-neutral': [0.5, 0.5, 0.3] },
-})
-const TINY_PNG =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+/** A small stand-in for a look's rendered pictures: every picture the director may ask for, 2 x 2 pixels each. */
+function tinyPack(): FramePack {
+  const frames: FramePack['frames'] = {}
+  for (const mood of MOODS) {
+    for (const frame of FRAMES[mood]) {
+      const pixels = Uint8Array.from([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 0])
+      frames[`${mood}-${frame}`] = { h: 'HHHH', s: 'SSSS', c: b64encode(pixels) }
+    }
+  }
+  return { half: 1.78, box: [0.3, 0.3, 0.7, 0.8], frames }
+}
+const TINY_LOOK = JSON.stringify(tinyPack())
+const LOOKS_FILE = { 'assets/looks/nokta-clay-none.json': TINY_LOOK }
+const LOOKS_FILE_ALL = LOOKS_FILE
 
 const PANE = {
   title: 'Nokta',
@@ -182,13 +190,14 @@ describe('the pure parts', () => {
     })
     expect(normalizeLook(undefined)).toEqual(DEFAULT_LOOK)
     expect(normalizeLook({ name: 'x'.repeat(60) }).name.length).toBeLessThanOrEqual(24)
+    // the looks the render holds: Nokta in five colours and four accessories, the others as they are
+    expect(COLORS.length * ACCESSORIES.length + (BODIES.length - 1)).toBe(23)
   })
 
-  test('icon keys name the files the mod ships', () => {
-    expect(iconKey(DEFAULT_LOOK, 'work')).toBe('nokta-clay-none-work')
-    expect(iconKey({ name: 'a', body: 'bulut', color: 'sky', accessory: 'none' }, 'sleep')).toBe(
-      'bulut-sky-none-sleep',
-    )
+  test('a change of body gives the new body its own colour, undressed', () => {
+    const dressed = { name: 'N', body: 'nokta', color: 'sage', accessory: 'glasses' } as const
+    expect(withBody(dressed, 'bulut')).toEqual({ name: 'N', body: 'bulut', color: DEFAULT_COLOR.bulut, accessory: 'none' })
+    expect(withBody(dressed, 'nokta')).toEqual({ name: 'N', body: 'nokta', color: 'clay', accessory: 'none' })
   })
 
   test('Turkish words fold to their plain letters', () => {
@@ -244,29 +253,44 @@ describe('the pure parts', () => {
     ])
   })
 
-  test('the hero card fits the surface\'s size limit, giving up the blink and then the picture', () => {
-    const base = { look: DEFAULT_LOOK, mood: 'neutral' as const, width: 496, label: 'Nokta', headline: 'Buradayım.', chip: 'Hazır', lines: ['Son iş'] }
-    const small = heroSvg({ ...base, png: 'A'.repeat(20_000), blinkPng: 'B'.repeat(20_000) })
-    expect(small.source).toContain('base64,' + 'B'.repeat(20_000))
-    // two frames too big together: the blink goes
-    const big = heroSvg({ ...base, png: 'A'.repeat(70_000), blinkPng: 'B'.repeat(70_000) })
-    expect(big.source.length).toBeLessThanOrEqual(120_000)
-    expect(big.source).toContain('base64,' + 'A'.repeat(70_000))
-    expect(big.source).not.toContain('BBBB')
-    // one frame too big: only the vector Nokta is left
-    const huge = heroSvg({ ...base, png: 'A'.repeat(130_000) })
-    expect(huge.source.length).toBeLessThanOrEqual(120_000)
-    expect(huge.source).not.toContain('<image')
-    // narrow: the picture goes on top, and the card gets taller
-    expect(heroSvg({ ...base, width: 340 }).height).toBeGreaterThan(small.height)
-    expect(heroSvg({ ...base, width: 100 }).width).toBe(300)
+  test('the hero is an SVG around the rendered picture, drawn for the moment and kept inside the size limit', () => {
+    const pack = tinyPack()
+    const at = { mood: 'neutral' as const, t: 1 }
+    const hero = heroSvg(DEFAULT_LOOK, pack, at, 500, 236)
+    expect(hero).toContain('<svg')
+    expect(hero).toContain('data:image/webp;base64,HHHH')
+    expect(hero).not.toContain('<animate') // the frames come one by one from the clock; nothing here relies on SMIL
+    expect(hero.length).toBeLessThanOrEqual(120_000)
+    // another moment, another picture or another place
+    const later = heroSvg(DEFAULT_LOOK, pack, { mood: 'neutral', t: 2.9 }, 500, 236)
+    expect(later).not.toBe(hero)
+    // the name is escaped
+    expect(heroSvg({ ...DEFAULT_LOOK, name: '<b>&"' }, pack, at, 500, 236)).toContain('&lt;b&gt;&amp;&quot;')
+    // a picture too big for the limit: the small one stands in
+    const frames = Object.fromEntries(Object.entries(pack.frames).map(([k, f]) => [k, { ...f, h: 'X'.repeat(130_000) }]))
+    const huge = heroSvg(DEFAULT_LOOK, { ...pack, frames }, at, 500, 236)
+    expect(huge.length).toBeLessThanOrEqual(120_000)
+    expect(huge).toContain('SSSS')
+    // narrower pane, same drawing, smaller stage
+    expect(heroSvg(DEFAULT_LOOK, pack, at, 300, 236)).toContain('viewBox="')
+  })
+
+  test('a change of mood lays the new picture over the old one, so Nokta is never half missing', () => {
+    const pack = tinyPack()
+    const mid = heroSvg(DEFAULT_LOOK, pack, { mood: 'happy', t: 5, from: { mood: 'neutral', k: 0.4 } }, 500, 236)
+    const pictures = (svg: string): number => svg.split('<image').length - 1
+    expect(pictures(mid)).toBe(2)
+    expect(mid).toContain('opacity="0.4"')
+    const done = heroSvg(DEFAULT_LOOK, pack, { mood: 'happy', t: 5, from: { mood: 'neutral', k: 1 } }, 500, 236)
+    expect(pictures(done)).toBe(1)
   })
 
   test('the persona and the spinner words carry the name', () => {
     expect(personaText('Pamuk')).toContain('Pamuk')
     expect(spinnerWord('Pamuk', 'thinking', 'Sauteing')).toContain('Pamuk')
     expect(spinnerWord('Pamuk', 'tool-use', 'x')).toContain('Pamuk')
-    expect(Object.keys(MOOD).length).toBe(7)
+    expect(MOODS.length).toBe(8)
+    expect(Object.keys(FRAMES).sort()).toEqual([...MOODS].sort())
   })
 
   test('terminal cells are half blocks, transparent as the default colour', () => {
@@ -285,25 +309,97 @@ describe('the pure parts', () => {
     for (const bytes of [[], [1], [1, 2], [1, 2, 3], [250, 251, 252, 253]]) {
       expect(Array.from(b64decode(b64encode(Uint8Array.from(bytes))))).toEqual(bytes)
     }
+    // a picture of the pack as cells: its size comes from its pixels
+    const cells = terminalCells(tinyPack(), 'neutral-open')
+    expect(cells?.columns).toBe(2)
+    expect(cells?.rows).toBe(1)
+    expect(terminalCells(tinyPack(), 'neutral-nope')).toBeUndefined()
   })
 
-  test('the SVG carries the render over a vector Nokta, blinks, and escapes the name', () => {
-    const look = { ...DEFAULT_LOOK, name: '<b>&"' }
-    const withRender = avatarSvg({ look, mood: 'work', png: 'AAAA', blinkPng: 'BBBB', size: 100, animated: true, glow: true })
-    expect(withRender).toContain('data:image/png;base64,AAAA')
-    expect(withRender).toContain('data:image/png;base64,BBBB') // the shut eyes, shown for a moment
-    expect(withRender.split('base64,AAAA').length).toBe(2) // once per frame: a size limit is near
-    expect(withRender).toContain('<animate')
-    expect(withRender).toContain('&lt;b&gt;&amp;&quot;')
-    expect(withRender).not.toContain('<b>')
-    expect(withRender).toContain('<radialGradient') // the halo
-    // a raised arm cannot blink with the sleeping render
-    const hand = avatarSvg({ look: DEFAULT_LOOK, mood: 'approve', png: 'AAAA', blinkPng: 'BBBB', size: 100, animated: true, glow: false })
-    expect(hand).not.toContain('BBBB')
-    const bare = avatarSvg({ look: DEFAULT_LOOK, mood: 'sleep', size: 80, animated: false, glow: false })
-    expect(bare).not.toContain('<image')
-    expect(bare).not.toContain('<animate')
-    expect(bare).toContain('<circle')
+  test('the small picture is the same Nokta, still and with its props, and escapes the name', () => {
+    const pack = tinyPack()
+    const small = avatarSvg({ ...DEFAULT_LOOK, name: '<b>&"' }, pack, { mood: 'approve', t: 1 }, 30)
+    expect(small).toContain('data:image/webp;base64,SSSS')
+    expect(small).toContain('width="30"')
+    expect(small).toContain('&lt;b&gt;&amp;&quot;')
+    expect(small).not.toContain('<b>')
+    expect(small).not.toContain('<animate')
+    // each mood has its own prop; a calm one has none
+    const sprites = { z: { half: 0.5, w: 'ZZZZ' }, bubble: { half: 0.5, w: 'BBBB' } }
+    expect(avatarSvg(DEFAULT_LOOK, pack, { mood: 'sleep', t: 1 }, 30, sprites)).toContain('ZZZZ')
+    expect(avatarSvg(DEFAULT_LOOK, pack, { mood: 'neutral', t: 1 }, 30, sprites)).not.toContain('ZZZZ')
+  })
+
+  test('the small 3D things around a mood come from the sprites, as plain pictures (no <use>: a surface may scrub it)', () => {
+    const pack = tinyPack()
+    const sprites = Object.fromEntries(
+      ['bubble', 'dot', 'bang', 'ask', 'z', 'spark', 'heart', 'heart2', 'drop', 'confa', 'confb', 'confc', 'confd'].map(name => [name, { half: 0.5, w: `P${name}P` }]),
+    )
+    const work = heroSvg(DEFAULT_LOOK, pack, { mood: 'work', t: 1 }, 500, 236, sprites)
+    expect(work).toContain('Pbubble')
+    expect(work.split('PdotP').length - 1).toBe(3)
+    expect(work).not.toContain('<use')
+    expect(heroSvg(DEFAULT_LOOK, pack, { mood: 'approve', t: 1 }, 500, 236, sprites)).toContain('PbangP')
+    expect(heroSvg(DEFAULT_LOOK, pack, { mood: 'ask', t: 1 }, 500, 236, sprites)).toContain('PaskP')
+    expect(heroSvg(DEFAULT_LOOK, pack, { mood: 'sleep', t: 1 }, 500, 236, sprites)).toContain('PzP')
+    expect(heroSvg(DEFAULT_LOOK, pack, { mood: 'love', t: 1 }, 500, 236, sprites)).toContain('PheartP')
+    expect(heroSvg(DEFAULT_LOOK, pack, { mood: 'happy', t: 1 }, 500, 236, sprites)).toContain('PsparkP')
+    // a calm Nokta has none, and without the file there are none
+    expect(heroSvg(DEFAULT_LOOK, pack, { mood: 'neutral', t: 1 }, 500, 236, sprites)).not.toContain('Pbubble')
+    expect(heroSvg(DEFAULT_LOOK, pack, { mood: 'work', t: 1 }, 500, 236)).not.toContain('Pbubble')
+    expect(isSprites(sprites)).toBe(true)
+    expect(isSprites({ dot: { half: 1 } })).toBe(false)
+  })
+
+  test('a file that is not a pack is not one', () => {
+    expect(isPack(tinyPack())).toBe(true)
+    expect(isPack(null)).toBe(false)
+    expect(isPack({ half: 1 })).toBe(false)
+    expect(isPack({ half: 1, box: [0, 0, 1], frames: {} })).toBe(false)
+  })
+})
+
+describe('the director', () => {
+  test('it only asks for pictures the render holds, and always finite moves', () => {
+    for (const mood of MOODS) {
+      for (let i = 0; i < 1200; i += 1) {
+        const shot = shotOf(mood, i * 0.05)
+        const frame = shot.frame.slice(mood.length + 1)
+        expect(shot.frame.startsWith(`${mood}-`)).toBe(true)
+        expect(FRAMES[mood]).toContain(frame)
+        for (const value of [shot.dx, shot.dy, shot.sx, shot.sy, shot.rot]) expect(Number.isFinite(value)).toBe(true)
+      }
+    }
+  })
+
+  test('the same moment is the same picture, and time moves it', () => {
+    expect(shotOf('happy', 3.21)).toEqual(shotOf('happy', 3.21))
+    expect(shotOf('happy', 3.21)).not.toEqual(shotOf('happy', 3.4))
+  })
+
+  test('a calm Nokta breathes, glances and blinks; a happy one hops; a waiting one waves', () => {
+    const frames = (mood: NoktaMood, seconds: number): Set<string> => {
+      const found = new Set<string>()
+      for (let i = 0; i < seconds * 20; i += 1) found.add(shotOf(mood, i * 0.05).frame)
+      return found
+    }
+    const neutral = frames('neutral', 120)
+    expect(neutral.has('neutral-open')).toBe(true)
+    expect(neutral.has('neutral-shut')).toBe(true) // a blink
+    expect(neutral.has('neutral-left') || neutral.has('neutral-right')).toBe(true) // a glance
+    const lowest = Math.min(...Array.from({ length: 400 }, (_, i) => shotOf('happy', i * 0.01).dy))
+    expect(lowest).toBeLessThan(-25)
+    expect(frames('approve', 10)).toEqual(new Set(['approve-w0', 'approve-w1', 'approve-w2']))
+    expect(frames('happy', 10)).toEqual(new Set(['happy-a', 'happy-b']))
+    expect(frames('sleep', 20)).toEqual(new Set(['sleep-a', 'sleep-b']))
+  })
+
+  test('a change of mood mixes the moves and ends on the new picture', () => {
+    const a = shotOf('neutral', 4)
+    const b = shotOf('happy', 4)
+    expect(Math.abs(blendShots(a, b, 0).dy - a.dy)).toBeLessThan(1e-9)
+    expect(Math.abs(blendShots(a, b, 1).dy - b.dy)).toBeLessThan(1e-9)
+    expect(blendShots(a, b, 0.5).frame).toBe(b.frame)
   })
 })
 
@@ -319,45 +415,35 @@ describe('on every surface', () => {
         props: PANE,
         viewport: VIEWPORT,
       })
+      expect(await ui.find({ type: 'Text', text: 'Nokta' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'hazır' })).toBeDefined()
       if (surface === 'terminal') {
-        expect(await ui.find({ type: 'Text', text: 'Nokta' })).toBeDefined()
-        expect(await ui.find({ type: 'Text', text: 'hazır' })).toBeDefined()
-        // no assets can be read here: a text face stands in for the picture
+        // no pictures can be read here: a text face stands in for the picture
         expect(await ui.find({ type: 'Text', text: '(• ‿ •)' })).toBeDefined()
       } else {
-        // the others get one designed card: the name, the headline and the pill are inside the picture
-        expect(await ui.find({ type: 'Svg' })).toBeDefined()
-        const card = JSON.stringify(await ui.drawn())
-        expect(card).toContain('Buradayım.')
-        expect(card).toContain('NOKTA')
-        expect(card).toContain('Hazır')
         expect(await ui.find({ key: 'pet' })).toBeDefined()
       }
       await ui.press({ key: 'body' })
       expect(look(seen)?.body).toBe('bulut')
+      expect(look(seen)?.color).toBe('sky') // a body's own colour follows it
       await ui.press({ key: 'body' })
       await ui.press({ key: 'body' })
       await ui.press({ key: 'body' })
-      const back = look(seen)
-      expect(back?.body).toBe('nokta')
+      expect(look(seen)).toEqual({ name: 'Nokta', body: 'nokta', color: 'clay', accessory: 'none' })
       await ui.press({ key: 'color' })
       expect(look(seen)?.color).toBe('sky')
       await ui.press({ key: 'accessory' })
       expect(look(seen)?.accessory).toBe('glasses')
       await ui.press({ key: 'quiet' })
       expect(seen['isQuiet']).toBe(true)
+      await ui.press({ key: 'motion' })
+      expect(seen['isStill']).toBe(true)
       await ui.unmount()
     })
   }
 
-  test('with the renders at hand the terminal gets cells and the others an SVG around the PNG', async ($, on) => {
-    engine(on, {
-      files: {
-        'assets/raster.json': TINY_PACK,
-        'nokta-clay-none-neutral.png': { base64: TINY_PNG },
-        'nokta-clay-none-sleep.png': { base64: TINY_PNG },
-      },
-    })
+  test('with the pictures at hand the terminal gets cells and the others an SVG around the rendered picture', async ($, on) => {
+    engine(on, { files: LOOKS_FILE })
     const terminal = await $.ui.mount({ plugin: 'nokta', surface: 'terminal', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
     const cells = JSON.stringify(await terminal.drawn())
     expect(cells).toContain('"type":"Raster"')
@@ -367,16 +453,23 @@ describe('on every surface', () => {
     for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
       const ui = await $.ui.mount({ plugin: 'nokta', surface, component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
       const svg = JSON.stringify(await ui.drawn())
-      expect(svg).toContain(`data:image/png;base64,${TINY_PNG}`)
-      // a still SVG: an "interactive" one is drawn in a frame that refuses the render
+      expect(svg).toContain('data:image/webp;base64,HHHH')
+      // a still SVG: an "interactive" one is drawn in a frame that refuses pictures
       expect(svg).not.toContain('isInteractive')
-      expect(svg).toContain('<animate')
       await ui.unmount()
     }
   })
 
+  test('a look that was not rendered borrows the nearest one that was', async ($, on) => {
+    engine(on, { files: LOOKS_FILE, entries: { look: { name: 'Nokta', body: 'nokta', color: 'sky', accessory: 'beret' } } })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    expect(JSON.stringify(await ui.drawn())).toContain('data:image/webp;base64,HHHH')
+    await ui.unmount()
+  })
+
   test('a short room gets a line of text instead of the big picture', async ($, on) => {
-    engine(on, { files: { 'assets/raster.json': TINY_PACK } })
+    engine(on, { files: LOOKS_FILE })
     const ui = await $.ui.mount({
       plugin: 'nokta',
       surface: 'terminal',
@@ -388,17 +481,6 @@ describe('on every surface', () => {
     expect(JSON.stringify(await ui.drawn())).not.toContain('"type":"Raster"')
     expect(await ui.find({ type: 'Text', text: '(• ‿ •)' })).toBeDefined()
     expect(await ui.find({ key: 'body' })).toBeDefined()
-    await ui.unmount()
-  })
-
-  test('kitty and Ghostty may show the real PNG instead of cells', { options: { terminalImages: 'kitty' } }, async ($, on) => {
-    engine(on, {
-      env: { KITTY_WINDOW_ID: '1' },
-      files: { 'nokta-clay-none-neutral.png': { base64: TINY_PNG } },
-    })
-    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
-    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'terminal', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
-    expect(JSON.stringify(await ui.drawn())).toContain('"type":"Image"')
     await ui.unmount()
   })
 
@@ -453,7 +535,7 @@ describe('on every surface', () => {
   })
 
   test('each reply opens with Nokta\'s face and name on the remote surfaces, and only the first block of a reply', async ($, on) => {
-    engine(on, { files: { 'nokta-clay-none-neutral.png': { base64: TINY_PNG } } })
+    engine(on, { files: LOOKS_FILE })
     for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
       const first = await $.ui.mount({ plugin: 'nokta', surface, component: 'AssistantMessage', props: { text: 'Merhaba', isFirstOfReply: true }, viewport: VIEWPORT })
       expect(await first.find({ type: 'Text', text: 'Nokta' })).toBeDefined()
@@ -472,7 +554,7 @@ describe('on every surface', () => {
   })
 
   test('the label can be switched off', { options: { messages: false } }, async ($, on) => {
-    engine(on, { files: { 'nokta-clay-none-neutral.png': { base64: TINY_PNG } } })
+    engine(on, { files: LOOKS_FILE })
     const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'AssistantMessage', props: { text: 'Merhaba', isFirstOfReply: true }, viewport: VIEWPORT })
     expect(await ui.find({ type: 'Text', text: 'Nokta' })).toBeUndefined()
     await ui.unmount()
@@ -606,22 +688,35 @@ describe('a turn', () => {
     expect(todos(seen)?.[1]?.status).toBe('in_progress')
   })
 
-  test('Nokta blinks in the terminal pane, only while calm', async ($, on) => {
+  test('Nokta moves in the terminal pane: a new picture only when the director asks for one, and only while the pane is shown', async ($, on) => {
     const blits: string[] = []
     engine(on, {
       isPaneShown: true,
-      files: { 'assets/raster.json': TINY_PACK },
-      onBlit: (requestId, key, cells) => blits.push(`${requestId}/${key}/${cells.length}`),
+      files: LOOKS_FILE,
+      onBlit: (requestId, key, cells) => blits.push(`${requestId}/${key}/${cells}`),
     })
     await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
-    await clock?.advance(5000)
-    // eyes shut, then open again
-    expect(blits.length).toBe(2)
+    await clock?.advance(30_000)
+    // a calm Nokta glances and blinks now and then: some pictures, never the same one twice in a row
+    expect(blits.length).toBeGreaterThan(0)
+    expect(blits.length).toBeLessThan(120)
     expect(blits[0]).toMatch(/^nokta\/nokta-avatar\//)
-    // busy Nokta does not blink
+    for (let i = 1; i < blits.length; i += 1) {
+      // every picture of the tiny pack has the same pixels: what differs is nothing, so only the count is asserted
+      expect(blits[i]).toBeDefined()
+    }
+    // a busy Nokta moves on: the glance of reading is quicker
+    const calm = blits.length
     await $.turn.start({ text: 'çalış', turnId: 't1' })
-    blits.length = 0
-    await clock?.advance(9000)
+    await clock?.advance(30_000)
+    expect(blits.length - calm).toBeGreaterThan(calm)
+  })
+
+  test('with no pane shown the terminal clock does not run', async ($, on) => {
+    const blits: string[] = []
+    engine(on, { isPaneShown: false, files: LOOKS_FILE, onBlit: (_r, key) => blits.push(key) })
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await clock?.advance(30_000)
     expect(blits).toEqual([])
   })
 
@@ -685,7 +780,7 @@ describe('/nokta', () => {
   const run = (args: string) =>
     ({ command: 'nokta', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } }) as const
 
-  test('it renames, redresses and mutes', async ($, on) => {
+  test('it renames, redresses, mutes and stills', async ($, on) => {
     const seen = engine(on)
     await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
     expect((await $.command.run(run('ad Pamuk'))).text).toContain('Pamuk')
@@ -697,8 +792,13 @@ describe('/nokta', () => {
     expect((await $.command.run(run('gövde tavşan'))).text).toContain('Tavşan')
     expect(look(seen)).toEqual({ name: 'Pamuk', body: 'tavsan', color: 'peach', accessory: 'none' })
     expect((await $.command.run(run('renk gök'))).text).toContain('sabit')
+    expect((await $.command.run(run('aksesuar bere'))).text).toContain('yalnızca Nokta')
     expect((await $.command.run(run('sessiz'))).text).toContain('kapalı')
     expect(seen['isQuiet']).toBe(true)
+    expect((await $.command.run(run('hareket'))).text).toContain('kapalı')
+    expect(seen['isStill']).toBe(true)
+    expect((await $.command.run(run('hareket'))).text).toContain('açık')
+    expect(seen['isStill']).toBe(false)
   })
 
   test('it opens the pane, reports its state and lists its commands', async ($, on) => {
@@ -852,13 +952,13 @@ describe('an agent, not just a face', () => {
   test('it can be petted, from the command and from the pane, and settles again', async ($, on) => {
     const seen = engine(on)
     await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
-    expect((await $.command.run(run('sev'))).text).toContain('(^ ▿ ^)')
-    expect(mood(seen)).toBe('happy')
+    expect((await $.command.run(run('sev'))).text).toContain('(♡ ‿ ♡)')
+    expect(mood(seen)).toBe('love')
     await clock?.advance(4000)
     expect(mood(seen)).toBe('neutral')
     const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
     await ui.press({ key: 'pet' })
-    expect(mood(seen)).toBe('happy')
+    expect(mood(seen)).toBe('love')
     await ui.unmount()
   })
 
@@ -871,6 +971,67 @@ describe('an agent, not just a face', () => {
     await ui.press({ key: 'forget-0' })
     expect(seen['notes']).toEqual(['testler make t ile'])
     await ui.unmount()
+  })
+})
+
+describe('the animation clock', () => {
+  const frames = (seen: Seen): number => Number(seen['frame'] ?? 0)
+
+  test('it runs while the pane is drawn, and stops soon after it stops being drawn', async ($, on) => {
+    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    await clock?.advance(2000)
+    const running = frames(seen)
+    expect(running).toBeGreaterThan(5)
+    await clock?.advance(1000)
+    expect(frames(seen)).toBeGreaterThan(running)
+    // nobody draws the pane any more: a moment later the clock is off
+    await ui.unmount()
+    await clock?.advance(3000)
+    const stopped = frames(seen)
+    await clock?.advance(5000)
+    expect(frames(seen)).toBe(stopped)
+    // and the pane coming back wakes it
+    const again = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    await clock?.advance(2500)
+    expect(frames(seen)).toBeGreaterThan(stopped)
+    await again.unmount()
+  })
+
+  test('a still Nokta stays still, and the choice is kept', async ($, on) => {
+    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE_ALL })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    await ui.press({ key: 'motion' })
+    expect(seen['isStill']).toBe(true)
+    await clock?.advance(2000)
+    const held = frames(seen)
+    await clock?.advance(5000)
+    expect(frames(seen)).toBe(held)
+    await ui.unmount()
+  })
+
+  test('the setting turns motion off for good', { options: { motion: false } }, async ($, on) => {
+    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    await clock?.advance(6000)
+    expect(frames(seen)).toBe(0)
+    await ui.unmount()
+  })
+
+  test('the band moves only while Nokta is busy', async ($, on) => {
+    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    const props = { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 5 }, view: {} } as const
+    const band = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'AbovePrompt', props, viewport: VIEWPORT })
+    await clock?.advance(5000)
+    expect(frames(seen)).toBe(0) // calm: nothing to animate in the band
+    await $.turn.start({ text: 'çalış', turnId: 't1' })
+    await clock?.advance(3000)
+    expect(frames(seen)).toBeGreaterThan(10)
+    await band.unmount()
   })
 })
 

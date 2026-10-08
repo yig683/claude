@@ -36,8 +36,22 @@ def frame1(n):
 
 
 # ============================================================================ bodies
-def arm_set(body, pose):
-    """Arm presets as lists of dict(s=shoulder, h=hand, r0, r1)."""
+def _swing(arm, ang):
+    """The hand of an arm turned about its shoulder by `ang` radians in the picture plane (x right, z up)."""
+    if not ang:
+        return arm
+    sx, sy, sz = arm['s']
+    hx, hy, hz = arm['h']
+    dx, dz = hx - sx, hz - sz
+    c, si = math.cos(ang), math.sin(ang)
+    out = dict(arm)
+    out['h'] = (sx + dx * c - dz * si, hy, sz + dx * si + dz * c)
+    return out
+
+
+def arm_set(body, pose, wave=0.0, sway=0.0):
+    """Arm presets as lists of dict(s=shoulder, h=hand, r0, r1). `wave` turns the raised hand of 'wave',
+    `sway` the two hands of 'cheer' (towards each other when positive): the poses an animation moves between."""
     if body in ('nokta', 'tavsan', 'bulut'):
         X = {'nokta': 0.86, 'tavsan': 0.84, 'bulut': 1.02}[body]
         Z0 = {'nokta': -0.12, 'tavsan': -0.18, 'bulut': -0.2}[body]
@@ -46,8 +60,8 @@ def arm_set(body, pose):
         raise_l = dict(s=(-X * 0.92, 0.0, Z0 + 0.12), h=(-(X + 0.40), -0.30, Z0 + 0.74), r0=0.20, r1=0.235)
         poses = {
             'down': [hang(-1), hang(1)],
-            'wave': [hang(-1), raise_r],
-            'cheer': [raise_l, raise_r],
+            'wave': [hang(-1), _swing(raise_r, wave)],
+            'cheer': [_swing(raise_l, -sway), _swing(raise_r, sway)],
             'think': [hang(-1), dict(s=(X * 0.86, -0.12, Z0 + 0.1), h=(0.55, -0.98, Z0 - 0.38), r0=0.2, r1=0.15)],
             'work': [hang(-1), dict(s=(X * 0.9, -0.05, Z0 + 0.05), h=(X + 0.46, -0.28, Z0 + 0.34), r0=0.20, r1=0.22)],
             'worry': [dict(s=(-X * 0.86, -0.1, Z0), h=(-0.72, -0.9, Z0 + 0.1), r0=0.2, r1=0.15),
@@ -59,7 +73,7 @@ def arm_set(body, pose):
         hang = lambda sx: dict(s=(sx * 0.66, 0.0, -0.40), h=(sx * 1.02, -0.26, -0.80), r0=0.22, r1=0.14)
         raise_r = dict(s=(0.55, 0.0, -0.3), h=(1.18, -0.28, 0.35), r0=0.21, r1=0.15)
         raise_l = dict(s=(-0.55, 0.0, -0.3), h=(-1.18, -0.28, 0.35), r0=0.21, r1=0.15)
-        poses = {'down': [], 'wave': [raise_r], 'cheer': [raise_l, raise_r],
+        poses = {'down': [], 'wave': [_swing(raise_r, wave)], 'cheer': [_swing(raise_l, -sway), _swing(raise_r, sway)],
                  'think': [], 'work': [], 'worry': [], 'sleep': []}
         return poses[pose]
     raise ValueError(body)
@@ -313,18 +327,19 @@ FACE_STATES = {
     'approve':  dict(eyes='wide', look=(0, 0), brow=(0.25, 0.25, 0.05, 0.05), mouth=('smile', 0.26, 0.10), pose='wave', cheer=0.6),
     'happy':    dict(eyes='happy', brow=(0.0, 0.0, 0.0, 0.0), mouth=('open', 0.46, 0.34), pose='cheer', cheer=0.8),
     'worry':    dict(eyes='open', look=(0, -0.10), brow=(0.55, 0.55, 0.06, 0.06), mouth=('wavy', 0.28, 0.05), pose='down', cheer=0.4, tilt=0.08),
+    'love':     dict(eyes='happy', brow=(0.0, 0.0, 0.0, 0.0), mouth=('open', 0.34, 0.20), pose='down', cheer=0.9, tilt=0.0),
 }
 
 
-def build_character(body='nokta', color=None, state='neutral', accessory=None, quality='preview',
-                    yaw=-0.10, roll=0.03, pitch=0.0, hover=0.0, squash=1.0, ear_flop=False, extras=True, pose=None, loc=(0.0, 0.0)):
+def build_body(body='nokta', color=None, pose='down', quality='preview', squash=1.0, ear_flop=False, blush=0.62,
+               yaw=-0.10, roll=0.03, pitch=0.0, tilt=0.0, hover=0.0, loc=(0.0, 0.0), wave=0.0, sway=0.0):
+    """The body of a character (mesh, material, arms, blush): everything that does not change with the face."""
     cfg = {'nokta': 'clay', 'bulut': 'sky', 'tavsan': 'peach', 'ucgen': 'ink'}
     color = color or cfg[body]
     pal = PALETTE[color]
-    st = FACE_STATES[state]
-    group = S.empty('char_%s_%s' % (body, state))
+    group = S.empty('char_%s_%s' % (body, color))
     layout = face_layout(body)
-    arms = arm_set(body, pose or st['pose'])
+    arms = arm_set(body, pose, wave=wave, sway=sway)
     f, lo, hi, ex = body_field(body, arms, squash=squash, ear_flop=ear_flop)
 
     # blush empties (children of group): elliptical falloff via empty scale
@@ -333,7 +348,7 @@ def build_character(body='nokta', color=None, state='neutral', accessory=None, q
     for sx in (-1, 1):
         P, N, ok = surface_hits(f, [sx * cu], [cv], y_start=-2.3, y_end=0.9, step=0.012)
         e = S.empty('blush_%d' % sx, tuple(P[0] - 0.02 * N[0]), (0.17, 0.22, 0.17), group)
-        blush_obs.append((e, pal['blush'], 0.62 if state != 'happy' else 0.8))
+        blush_obs.append((e, pal['blush'], blush))
 
     body_mat = S.clay_material('body_' + color, pal['base'], sss_radius=pal['sss'], blushes=blush_obs, tint_hex=pal['tint'],
                                roughness=pal.get('rough', 0.42), coat=pal.get('coat', 0.18), sheen=pal.get('sheen', 0.22),
@@ -356,8 +371,17 @@ def build_character(body='nokta', color=None, state='neutral', accessory=None, q
         tongue=S.line_material('tongue', '#E4776F', 0.45),
         body=body_mat,
     )
-    face = Face(f, layout, mats, group, style=pal['eye'])
-    if body == 'tavsan':
+    group.rotation_euler = (pitch, roll + tilt * 0.5, yaw)
+    group.location = (loc[0], loc[1], hover)
+    return dict(group=group, field=f, body=body_ob, mats=mats, palette=pal, layout=layout, extras=ex, name=body)
+
+
+def build_face(ctx, st):
+    """Eyes, brows and mouth for a face state `st` (a FACE_STATES entry, possibly with `lid`): the part an animation changes."""
+    f, layout, group, pal = ctx['field'], ctx['layout'], ctx['group'], ctx['palette']
+    before = {c.name for c in group.children}
+    face = Face(f, layout, ctx['mats'], group, style=pal['eye'])
+    if ctx['name'] == 'tavsan':
         face.nose(0.0, layout['my'] + 0.15, 0.052)
     L = layout
     rx, ry, rz = L['rx'], L['ry'], L['rz']
@@ -370,16 +394,18 @@ def build_character(body='nokta', color=None, state='neutral', accessory=None, q
         if eyes in ('open', 'wide', 'focus'):
             k = {'open': 1.0, 'wide': 1.12, 'focus': 0.95}[eyes]
             face.eye('eye%d' % sx, u, v, rx * k, ry, rz * k, glints=True, look=(0.0, 0.0))
-            if eyes == 'focus':
-                face.lid('lid%d' % sx, u, v, rx * k, ry, rz * k, amount=0.16, tilt=sx * 0.10)
+            lid = st.get('lid', 0.16 if eyes == 'focus' else 0.0)
+            if lid > 0:
+                face.lid('lid%d' % sx, u, v, rx * k, ry, rz * k, amount=lid, tilt=sx * (0.10 if eyes == 'focus' else 0.0))
         elif eyes in ('happy', 'sleep'):
             face.arc_eye('eyearc%d' % sx, u, v, rx * 1.05, 0.085 if eyes == 'happy' else 0.05, kind=eyes)
     # brows
     bl_up, br_up, bl_dv, br_dv = st['brow']
+    brow_eyes = st.get('brow_as', eyes)
     for sx, up_, dv in ((-1, bl_up, bl_dv), (1, br_up, br_dv)):
-        if eyes in ('open', 'wide', 'focus'):
+        if brow_eyes in ('open', 'wide', 'focus'):
             face.brow('brow%d' % sx, sx * ex_ + lookshift[0], L['brow'] + dv, inner_up=up_)
-        elif eyes == 'sleep':
+        elif brow_eyes == 'sleep':
             face.brow('brow%d' % sx, sx * ex_, L['brow'] - 0.04, inner_up=-0.12, curve=0.03)
     # mouth
     m = st['mouth']
@@ -389,15 +415,34 @@ def build_character(body='nokta', color=None, state='neutral', accessory=None, q
         face.mouth_o(L['mx'], L['my'], m[1], m[2])
     else:
         face.mouth_smile(L['mx'], L['my'], m[1] * 0.5, m[2], kind=m[0])
+    # everything this expression added to the character, the end caps of its lines included
+    face.objs = [c for c in group.children if c.name not in before]
+    return face
 
+
+def clear_face(face):
+    """Removes what build_face made, so the next expression can be built on the same body.
+    (Mesh data is left to Blender: some of it is shared between objects.)"""
+    import bpy
+    for ob in face.objs:
+        bpy.data.objects.remove(ob, do_unlink=True)
+    face.objs.clear()
+
+
+def build_character(body='nokta', color=None, state='neutral', accessory=None, quality='preview',
+                    yaw=-0.10, roll=0.03, pitch=0.0, hover=0.0, squash=1.0, ear_flop=False, extras=True, pose=None, loc=(0.0, 0.0)):
+    st = FACE_STATES[state]
+    ctx = build_body(body=body, color=color, pose=pose or st['pose'], quality=quality, squash=squash, ear_flop=ear_flop,
+                     blush=0.62 if state != 'happy' else 0.8, yaw=yaw, roll=roll, pitch=pitch, tilt=st.get('tilt', 0.0),
+                     hover=hover, loc=loc)
+    face = build_face(ctx, st)
+    group = ctx['group']
     if extras:
         add_state_props(group, body, state, face)
     if accessory:
         add_accessory(group, body, accessory, face)
-
-    group.rotation_euler = (pitch, roll + st.get('tilt', 0.0) * 0.5, yaw)
-    group.location = (loc[0], loc[1], hover)
-    return dict(group=group, face=face, field=f, body=body_ob, mats=mats, palette=pal, state=st, extras=ex)
+    return dict(group=group, face=face, field=ctx['field'], body=ctx['body'], mats=ctx['mats'], palette=ctx['palette'],
+                state=st, extras=ctx['extras'])
 
 
 WIDTH = {'nokta': 1.0, 'bulut': 1.22, 'tavsan': 1.0, 'ucgen': 1.05}
@@ -425,12 +470,13 @@ def add_state_props(group, body, state, face):
         PR.sweat_drop(tuple(P[0] + N[0] * 0.05), r=0.12, parent=group, tilt=0.22)
 
 
-def add_accessory(group, body, name, face):
+def add_accessory(group, body, name, face, frame='#23201D', cloth='#2B2926'):
+    """Glasses, a beret or a bow tie; `frame` is the glasses' metal, `cloth` the beret's and bow tie's stuff."""
     if name == 'glasses':
-        PR.glasses(face, group)
+        PR.glasses(face, group, frame_hex=frame)
     elif name == 'beret':
-        PR.beret(group, top=TOP[body] - 0.04)
+        PR.beret(group, top=TOP[body] - 0.04, color=cloth)
     elif name == 'bowtie':
-        PR.bowtie(face, group, v=-0.55 if body == 'nokta' else -0.62)
+        PR.bowtie(face, group, color=cloth, v=-0.55 if body == 'nokta' else -0.62)
     else:
         raise ValueError(name)

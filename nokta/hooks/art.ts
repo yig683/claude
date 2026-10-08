@@ -1,8 +1,9 @@
-// Nokta's pictures, as pure functions: the 3D renders the mod ships (assets/icons, assets/raster.json)
-// as terminal cells and as SVG. (Reading the files is the hooks module's job: it alone touches `$`.)
-// Everything degrades: no asset on disk, a surface that scrubs <image>: the vector Nokta underneath still shows.
-import type { NoktaLook, NoktaMood } from '../types'
-import { clip, MOOD } from './model'
+// Nokta's pictures as pure functions: the rendered 3D pictures (assets/looks) placed, moved and dressed into an
+// SVG for the apps, and cut into terminal cells. (Reading the files is the hooks module's job: it alone touches `$`.)
+import type { NoktaColor, NoktaLook, NoktaMood } from '../types'
+import { blendShots, CANVAS, GROUND, propsOf, shadowNode, shotOf, stageNodes, UNIT, type Lod, type Shot, type Sprites } from './motion'
+import { chain, grow, group, move, picture, toSvg, turn, type Node } from './gfx'
+import { MOOD } from './model'
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
@@ -36,16 +37,6 @@ export function b64decode(text: string): Uint8Array {
     if (d >= 0 && o < out.length) out[o++] = n & 255
   }
   return out
-}
-
-/** What assets/raster.json holds: every icon as a small RGBA picture, and the largest disc inside its silhouette. */
-export type RasterPack = {
-  width: number
-  height: number
-  /** Base64 of `width * height` RGBA pixels, per icon key. */
-  rgba: Record<string, string>
-  /** [cx, cy, r] of a disc that lies wholly inside the render's silhouette, as fractions of the picture. */
-  disc: Record<string, [number, number, number]>
 }
 
 /** Pixels (RGBA, row-major) to half-block cells: `▀` and `▄`, the top and bottom pixel as two colours. */
@@ -93,344 +84,131 @@ export function rasterCells(rgba: Uint8Array, width: number, height: number): st
   return b64encode(bytes)
 }
 
-/** Escapes text for an XML attribute or element. */
-export function xml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+/** What assets/looks/<look>.json holds: the rendered pictures of one look. */
+export type FramePack = {
+  /** Scene units across half the picture (a Nokta body is about two units wide). */
+  half: number
+  /** The silhouette of the resting pose, as fractions of the picture: x0, y0, x1, y1. */
+  box: readonly [number, number, number, number]
+  /** `<mood>-<frame>`: base64 WebP (the big picture, the small one) and the 24 x 24 RGBA pixels for terminal cells. */
+  frames: Record<string, { h: string; s: string; c: string }>
 }
 
-const BODY_FILL: Record<string, string> = {
-  clay: '#E8A07E',
-  sky: '#9DBBD3',
-  sage: '#A6C0A0',
-  kraft: '#D3B08A',
-  ink: '#4A4743',
-  peach: '#F2B9A0',
+/** Whether a parsed file is a set of sprites we can draw from. */
+export function isSprites(value: unknown): value is Sprites {
+  if (typeof value !== 'object' || value === null) return false
+  return Object.values(value).every(one => typeof one === 'object' && one !== null && typeof (one as { half?: unknown }).half === 'number' && typeof (one as { w?: unknown }).w === 'string')
 }
 
-/** Eyes and mouth of the vector Nokta, per mood, on a disc of radius 1 around its centre. */
-function vectorFace(mood: NoktaMood, ink: string): string {
-  const eye = (x: number): string =>
-    `<ellipse cx="${x}" cy="-0.08" rx="0.085" ry="0.12" fill="${ink}"/>`
-  switch (mood) {
-    case 'happy':
-      return (
-        `<path d="M-0.42 -0.06 Q-0.3 -0.24 -0.18 -0.06" stroke="${ink}" stroke-width="0.07" fill="none" stroke-linecap="round"/>` +
-        `<path d="M0.18 -0.06 Q0.3 -0.24 0.42 -0.06" stroke="${ink}" stroke-width="0.07" fill="none" stroke-linecap="round"/>` +
-        `<path d="M-0.16 0.2 Q0 0.4 0.16 0.2 Z" fill="${ink}"/>`
-      )
-    case 'sleep':
-      return (
-        `<path d="M-0.42 -0.06 Q-0.3 0.04 -0.18 -0.06" stroke="${ink}" stroke-width="0.07" fill="none" stroke-linecap="round"/>` +
-        `<path d="M0.18 -0.06 Q0.3 0.04 0.42 -0.06" stroke="${ink}" stroke-width="0.07" fill="none" stroke-linecap="round"/>` +
-        `<ellipse cx="0" cy="0.26" rx="0.05" ry="0.04" fill="${ink}"/>`
-      )
-    case 'worry':
-      return (
-        eye(-0.3) + eye(0.3) +
-        `<path d="M-0.14 0.3 Q0 0.2 0.14 0.3" stroke="${ink}" stroke-width="0.06" fill="none" stroke-linecap="round"/>`
-      )
-    case 'ask':
-      return eye(-0.3) + eye(0.3) + `<ellipse cx="0" cy="0.27" rx="0.06" ry="0.07" fill="${ink}"/>`
-    case 'approve':
-      return (
-        eye(-0.3) + eye(0.3) +
-        `<path d="M-0.14 0.22 Q0 0.36 0.14 0.22" stroke="${ink}" stroke-width="0.06" fill="none" stroke-linecap="round"/>`
-      )
-    case 'work':
-      return (
-        `<path d="M-0.42 -0.08 L-0.18 -0.08" stroke="${ink}" stroke-width="0.07" stroke-linecap="round"/>` +
-        `<path d="M0.18 -0.08 L0.42 -0.08" stroke="${ink}" stroke-width="0.07" stroke-linecap="round"/>` +
-        `<path d="M-0.1 0.26 L0.1 0.26" stroke="${ink}" stroke-width="0.06" stroke-linecap="round"/>`
-      )
-    default:
-      return (
-        eye(-0.3) + eye(0.3) +
-        `<path d="M-0.14 0.22 Q0 0.32 0.14 0.22" stroke="${ink}" stroke-width="0.06" fill="none" stroke-linecap="round"/>`
-      )
-  }
+/** Whether a parsed file is a pack we can draw from. */
+export function isPack(value: unknown): value is FramePack {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Partial<FramePack>
+  return typeof v.half === 'number' && Array.isArray(v.box) && v.box.length === 4 && typeof v.frames === 'object' && v.frames !== null
 }
 
-/** A mood's little prop (what the renders leave out): drawn in a 100 x 100 box, top right. */
-function badge(mood: NoktaMood, animated: boolean): string {
-  const color = MOOD[mood].color
-  const a = (inner: string): string => (animated ? inner : '')
-  switch (mood) {
-    case 'work':
-      return [0, 1, 2]
-        .map(
-          i =>
-            `<circle cx="${70 + i * 9}" cy="16" r="3.2" fill="${color}" opacity="0.35">` +
-            a(
-              `<animate attributeName="opacity" values="0.25;1;0.25" dur="1.2s" begin="${(i * 0.25).toFixed(2)}s" repeatCount="indefinite"/>`,
-            ) +
-            `</circle>`,
-        )
-        .join('')
-    case 'ask':
-      return (
-        `<circle cx="82" cy="17" r="10" fill="${color}">` +
-        a(`<animate attributeName="r" values="10;11.5;10" dur="1.6s" repeatCount="indefinite"/>`) +
-        `</circle>` +
-        `<text x="82" y="22.5" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="15" font-weight="700" fill="#fff">?</text>`
-      )
-    case 'approve':
-      return (
-        `<circle cx="82" cy="17" r="10" fill="${color}"/>` +
-        a(
-          `<circle cx="82" cy="17" r="10" fill="none" stroke="${color}" stroke-width="2"><animate attributeName="r" values="10;17" dur="1.4s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.6;0" dur="1.4s" repeatCount="indefinite"/></circle>`,
-        ) +
-        `<text x="82" y="22.5" text-anchor="middle" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="15" font-weight="700" fill="#fff">!</text>`
-      )
-    case 'happy': {
-      const star = (x: number, y: number, s: number, begin: string): string =>
-        `<path d="M${x} ${y - s} L${x + s * 0.28} ${y - s * 0.28} L${x + s} ${y} L${x + s * 0.28} ${y + s * 0.28} L${x} ${y + s} L${x - s * 0.28} ${y + s * 0.28} L${x - s} ${y} L${x - s * 0.28} ${y - s * 0.28} Z" fill="#E9B44C">` +
-        a(
-          `<animate attributeName="opacity" values="0.3;1;0.3" dur="1.6s" begin="${begin}" repeatCount="indefinite"/>`,
-        ) +
-        `</path>`
-      return star(82, 18, 8, '0s') + star(16, 28, 5, '0.5s') + star(90, 44, 4, '1s')
-    }
-    case 'worry':
-      return (
-        `<path d="M80 10 Q86 20 80 25 Q74 20 80 10 Z" fill="#8FB8E0">` +
-        a(
-          `<animateTransform attributeName="transform" type="translate" values="0 0;0 6;0 0" dur="1.8s" repeatCount="indefinite"/>`,
-        ) +
-        `</path>`
-      )
-    case 'sleep':
-      return (
-        `<text x="74" y="26" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="13" font-weight="700" fill="${color}">z` +
-        a(
-          `<animate attributeName="opacity" values="0.2;1;0.2" dur="2.4s" repeatCount="indefinite"/>`,
-        ) +
-        `</text>` +
-        `<text x="84" y="14" font-family="system-ui,-apple-system,Segoe UI,sans-serif" font-size="17" font-weight="700" fill="${color}">Z` +
-        a(
-          `<animate attributeName="opacity" values="1;0.2;1" dur="2.4s" repeatCount="indefinite"/>`,
-        ) +
-        `</text>`
-      )
-    default:
-      return ''
-  }
-}
-
-export type AvatarOptions = {
-  look: NoktaLook
-  mood: NoktaMood
-  /** Base64 PNG of the render; without it only the vector Nokta is drawn. */
-  png?: string
-  /** Base64 PNG of the same look with its eyes shut (the sleeping render): the blink. Poses that match only. */
-  blinkPng?: string
-  /** A disc [cx, cy, r] (fractions) wholly inside the render, where the vector fallback sits. */
-  disc?: [number, number, number]
-  /** CSS pixels, both sides. */
-  size: number
-  /** SMIL motion (breathing, hopping, blinking, the mood's prop); a surface that does not run it shows the still picture. */
-  animated: boolean
-  /** A soft halo in the mood's colour behind the character (the pane's big picture). */
-  glow: boolean
-}
-
-/** The moods whose pose (arms down) the closed-eyes render matches: they may blink. */
-const BLINKS: Partial<Record<NoktaMood, number>> = { neutral: 5.4, work: 4.2, ask: 6, worry: 6.6 }
-
-/** Whether a mood's pose lets it blink with the sleeping render. */
-export function canBlink(mood: NoktaMood): boolean {
-  return BLINKS[mood] !== undefined
-}
-
-const EASE = '0.45 0 0.55 1'
-
-function animateTransform(type: 'translate' | 'rotate' | 'scale', values: string, dur: number, keyTimes?: string): string {
-  const n = values.split(';').length
-  const times = keyTimes ?? Array.from({ length: n }, (_, i) => (i / (n - 1)).toFixed(3)).join(';')
-  const splines = Array.from({ length: n - 1 }, () => EASE).join(';')
-  return (
-    `<animateTransform attributeName="transform" type="${type}" values="${values}" keyTimes="${times}" ` +
-    `calcMode="spline" keySplines="${splines}" dur="${dur}s" repeatCount="indefinite"/>`
-  )
-}
-
-/** The mood's motion around its content: breathing, bobbing, swaying, hopping, shivering. */
-function wrapMotion(mood: NoktaMood, inner: string, animated: boolean): string {
-  if (!animated) return `<g>${inner}</g>`
-  switch (mood) {
-    case 'work':
-      return `<g>${animateTransform('translate', '0 0;0 -2.4;0 0', 0.9)}${inner}</g>`
-    case 'ask':
-      return `<g>${animateTransform('rotate', '-2.6 50 90;2.6 50 90;-2.6 50 90', 2.6)}${inner}</g>`
-    case 'approve':
-      return `<g>${animateTransform('translate', '0 0;0 -5;0 0;0 0', 1.4, '0;0.22;0.44;1')}${inner}</g>`
-    case 'happy':
-      return `<g>${animateTransform('translate', '0 0;0 -7;0 0;0 0', 2, '0;0.17;0.34;1')}${inner}</g>`
-    case 'worry':
-      return `<g>${animateTransform('translate', '0 0;-0.9 0;0.9 0;-0.9 0;0.9 0;0 0;0 0', 2.6, '0;0.03;0.06;0.09;0.12;0.15;1')}${inner}</g>`
-    case 'sleep':
-      return (
-        `<g transform="translate(50 90)"><g>${animateTransform('scale', '1;1.03;1', 4)}` +
-        `<g transform="translate(-50 -90)">${inner}</g></g></g>`
-      )
-    default:
-      return `<g>${animateTransform('translate', '0 0;0 -1.6;0 0', 3.2)}${inner}</g>`
-  }
-}
-
-type Parts = { defs: string; body: string }
-
-/** The picture proper, in a 100 x 100 box: halo, ground shadow, the moving character and the mood's prop. */
-function avatarParts(o: AvatarOptions, tag: string): Parts {
-  const fill = BODY_FILL[o.look.color] ?? BODY_FILL['clay'] ?? '#E8A07E'
-  const ink = o.look.color === 'ink' ? '#F3EEE6' : '#3A2A22'
-  const [cx, cy, r] = o.disc ?? [0.5, 0.56, 0.3]
-  const R = r * 100
-  const blink = BLINKS[o.mood]
-  const isBlinking = o.animated && o.blinkPng !== undefined && blink !== undefined
-  const frame = (png: string, extra: string): string =>
-    `<image x="0" y="0" width="100" height="100" preserveAspectRatio="xMidYMid meet" ${extra}` +
-    `href="data:image/png;base64,${png}">`
-  const image =
-    o.png === undefined
-      ? ''
-      : frame(o.png, '') +
-        (isBlinking
-          ? `<animate attributeName="opacity" calcMode="discrete" values="1;0;1" keyTimes="0;0.955;0.985" dur="${blink}s" repeatCount="indefinite"/>`
-          : '') +
-        '</image>'
-  const shut =
-    isBlinking && o.blinkPng !== undefined
-      ? frame(o.blinkPng, 'opacity="0" ') +
-        `<animate attributeName="opacity" calcMode="discrete" values="0;1;0" keyTimes="0;0.955;0.985" dur="${blink}s" repeatCount="indefinite"/></image>`
-      : ''
-  // the halo takes the body's own warm colour: a mood-coloured one (green for "ready") looked like a stain
-  const glow = o.glow
-    ? `<radialGradient id="h${tag}" cx="50%" cy="55%" r="50%"><stop offset="0%" stop-color="${fill}" stop-opacity="0.34"/>` +
-      `<stop offset="62%" stop-color="${fill}" stop-opacity="0.1"/><stop offset="100%" stop-color="${fill}" stop-opacity="0"/></radialGradient>`
-    : ''
-  const ground = `<radialGradient id="s${tag}"><stop offset="0%" stop-color="#000" stop-opacity="0.3"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient>`
-  const content =
-    `<g transform="translate(${(cx * 100).toFixed(1)} ${(cy * 100).toFixed(1)}) scale(${R.toFixed(1)})">` +
-    `<circle r="1" fill="${fill}"/>${vectorFace(o.mood, ink)}</g>` +
-    image +
-    shut +
-    badge(o.mood, o.animated)
-  return {
-    defs: glow + ground,
-    body:
-      (o.glow ? `<circle cx="50" cy="56" r="49" fill="url(#h${tag})"/>` : '') +
-      `<ellipse cx="50" cy="92" rx="${Math.max(18, R * 1.05).toFixed(1)}" ry="4.4" fill="url(#s${tag})"/>` +
-      wrapMotion(o.mood, content, o.animated),
-  }
-}
-
-/**
- * Nokta as an SVG for the remote surfaces. The render is the picture; under it sits a vector Nokta shaped
- * to fit inside the render's silhouette, so where a surface drops <image> there is still a face.
- * Motion is SMIL: it needs no script and no state, and where it does not run the picture is simply still.
- */
-export function avatarSvg(o: AvatarOptions): string {
-  const title = xml(`${o.look.name}: ${MOOD[o.mood].label}`)
-  const parts = avatarParts(o, `${o.size}${o.mood}`)
-  return (
-    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 100" width="${o.size}" height="${o.size}" role="img" aria-label="${title}">` +
-    `<title>${title}</title><defs>${parts.defs}</defs>${parts.body}</svg>`
-  )
-}
-
-const MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace"
-const SERIF = "Georgia,'Times New Roman',serif"
-const SANS = "system-ui,-apple-system,'Segoe UI',Roboto,sans-serif"
-/** Colours that read on a dark surface and on a light one alike: the surface's theme is not ours to know. */
-const ACCENT = '#D97757'
-const GRAY = '#8C8A85'
-
-export type HeroOptions = {
-  look: NoktaLook
-  mood: NoktaMood
-  png?: string
-  blinkPng?: string
-  disc?: [number, number, number]
-  /** CSS pixels the card is drawn at. */
-  width: number
-  /** The small caps line above the headline. */
-  label: string
-  headline: string
-  /** The pill: what Nokta is doing, and for how long. */
-  chip: string
-  /** Up to two lines of detail under the pill. */
-  lines: readonly string[]
-}
-
-/** A font size that lets `text` fit `avail` pixels, serif, no more than `base`. */
-function fit(text: string, avail: number, base: number): number {
-  const need = text.length * base * 0.52
-  return need <= avail ? base : Math.max(14, Math.floor((base * avail) / need))
-}
-
-/**
- * The pane's top card on the remote surfaces: the character big, on a warm card, with its words set in type
- * the surface's own text cannot be (a serif headline, a small caps label, a pill). One picture, so it
- * holds together; the buttons stay the surface's own.
- */
-export function heroSvg(o: HeroOptions): { source: string; width: number; height: number } {
-  // the whole picture; else without the blink; else the vector Nokta alone
-  for (const tried of [o, { ...o, blinkPng: undefined }]) {
-    const drawn = heroOnce(tried)
-    if (drawn.source.length <= SVG_ROOM) return drawn
-  }
-  return heroOnce({ ...o, png: undefined, blinkPng: undefined })
-}
+/** What the picture shows at a moment: the mood, seconds since the animation began, a change of mood in progress. */
+export type Moment = { mood: NoktaMood; t: number; from?: { mood: NoktaMood; k: number } }
 
 /** The most an Svg's source may hold is 131072 characters; a tree past it is refused whole. */
-const SVG_ROOM = 120_000
+export const SVG_ROOM = 120_000
 
-function heroOnce(o: HeroOptions): { source: string; width: number; height: number } {
-  const m = MOOD[o.mood]
-  const W = Math.round(Math.min(640, Math.max(300, o.width)))
-  const isWide = W >= 440
-  const A = isWide ? 188 : Math.min(176, W - 48)
-  const ax = isWide ? 14 : Math.round((W - A) / 2)
-  const ay = isWide ? 14 : 12
-  const x = isWide ? ax + A + 16 : W / 2
-  const avail = isWide ? W - x - 20 : W - 40
-  const anchor = isWide ? 'start' : 'middle'
-  const top = isWide ? 54 : ay + A + 16
-  const H = isWide ? ay * 2 + A : ay + A + 128
-  const headline = o.headline
-  const hs = fit(headline, avail, isWide ? 26 : 24)
-  const chipW = Math.round(o.chip.length * 7.1 + 34)
-  const chipX = isWide ? x : Math.round((W - chipW) / 2)
-  const chipY = top + 48
-  const lineAt = (i: number): number => chipY + 26 + 24 + i * 19
-  const parts = avatarParts(
-    { look: o.look, mood: o.mood, png: o.png, blinkPng: o.blinkPng, disc: o.disc, size: A, animated: true, glow: true },
-    `hero${o.mood}`,
-  )
-  const title = xml(`${o.look.name}: ${m.label}`)
-  const lines = o.lines
-    .slice(0, 2)
-    .map(
-      (line, i) =>
-        `<text x="${x}" y="${lineAt(i)}" text-anchor="${anchor}" font-family="${MONO}" font-size="11.5" fill="${GRAY}">${xml(clip(line, Math.max(8, Math.floor(avail / 6.9))))}</text>`,
-    )
-    .join('')
-  const source =
-    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${title}">` +
-    `<title>${title}</title>` +
-    `<defs><linearGradient id="card" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${ACCENT}" stop-opacity="0.18"/><stop offset="1" stop-color="${ACCENT}" stop-opacity="0.05"/></linearGradient></defs>` +
-    `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="18" fill="url(#card)" stroke="${ACCENT}" stroke-opacity="0.28"/>` +
-    `<svg x="${ax}" y="${ay}" width="${A}" height="${A}" viewBox="0 0 100 100" overflow="visible"><defs>${parts.defs}</defs>${parts.body}</svg>` +
-    `<text x="${x}" y="${top}" text-anchor="${anchor}" font-family="${MONO}" font-size="10.5" letter-spacing="1.4" fill="${GRAY}">${xml(o.label.toUpperCase())}</text>` +
-    `<text x="${x}" y="${top + 36}" text-anchor="${anchor}" font-family="${SERIF}" font-size="${hs}" font-weight="600" fill="${ACCENT}">${xml(headline)}</text>` +
-    `<rect x="${chipX}" y="${chipY}" width="${chipW}" height="26" rx="13" fill="${m.ui}" fill-opacity="0.16" stroke="${m.ui}" stroke-opacity="0.35"/>` +
-    `<circle cx="${chipX + 14}" cy="${chipY + 13}" r="3.6" fill="${m.ui}"/>` +
-    `<text x="${chipX + 26}" y="${chipY + 17.4}" font-family="${SANS}" font-size="12.5" font-weight="600" fill="${m.ui}">${xml(o.chip)}</text>` +
-    lines +
-    `</svg>`
-  return { source, width: W, height: H }
+/** A mood's glow: the look's own warm colour, light enough to read on a dark surface. */
+const GLOW: Record<NoktaColor, string> = {
+  clay: '#EC7F5E',
+  sky: '#79B2E8',
+  sage: '#9ECC90',
+  kraft: '#E2B97E',
+  ink: '#8E97C0',
+  peach: '#FFC6A8',
+}
+
+/** How much of its natural size each body is drawn at, so a tall cloud or a long-eared rabbit still fits the stage. */
+const FIT: Record<NoktaLook['body'], number> = { nokta: 1, bulut: 0.84, tavsan: 0.78, ucgen: 0.8 }
+
+/** The shot a moment asks for, its change of mood folded in. `over` is the new picture fading in over `under`. */
+function shotsAt(at: Moment): { shot: Shot; under?: Shot; k: number } {
+  const now = shotOf(at.mood, at.t)
+  if (at.from === undefined || at.from.k >= 1) return { shot: now, k: 1 }
+  const before = shotOf(at.from.mood, at.t)
+  return { shot: blendShots(before, now, at.from.k), under: before, k: Math.max(0, at.from.k) }
+}
+
+/** One picture of the pack, placed so the feet stand on the stage's ground and moved as `shot` says. */
+function placed(pack: FramePack, shot: Shot, frame: string, size: 'h' | 's', opacity: number, fit: number): Node | undefined {
+  const f = pack.frames[frame]
+  if (f === undefined) return undefined
+  const side = 2 * pack.half * UNIT * fit
+  const ax = (pack.box[0] + pack.box[2]) / 2
+  const ay = pack.box[3]
+  const m = chain(move(shot.dx, shot.dy), turn(shot.rot, 120, GROUND), grow(shot.sx, shot.sy, 120, GROUND))
+  return picture(120 - ax * side, GROUND - ay * side, side, side, `data:image/webp;base64,${f[size]}`, { m, opacity })
+}
+
+function figureNodes(look: NoktaLook, pack: FramePack, at: Moment, size: 'h' | 's', lod: Lod, isStaged: boolean, span: number, sprites: Sprites | undefined): Node[] {
+  const fit = FIT[look.body] ?? 1
+  const glow = GLOW[look.color]
+  const { shot: raw, under: rawUnder, k } = shotsAt(at)
+  // the moves shrink with the body, or a small rabbit would hop as high as a big dot
+  const shot = { ...raw, dx: raw.dx * fit, dy: raw.dy * fit }
+  const under = rawUnder === undefined ? undefined : { ...rawUnder, dx: rawUnder.dx * fit, dy: rawUnder.dy * fit }
+  const bodyWidth = (pack.box[2] - pack.box[0]) * 2 * pack.half * UNIT * fit
+  const nodes: Node[] = []
+  if (isStaged) nodes.push(...stageNodes(glow, span))
+  nodes.push(shadowNode(shot.dy, bodyWidth * 0.42))
+  // the old picture stays whole under the new one while that fades in: no moment with a hole in Nokta
+  if (under !== undefined) {
+    const old = placed(pack, shot, under.frame, size, 1, fit)
+    if (old !== undefined) nodes.push(old)
+  }
+  const fresh = placed(pack, shot, shot.frame, size, under === undefined ? 1 : k, fit)
+  if (fresh !== undefined) nodes.push(fresh)
+  if (at.from !== undefined && at.from.k < 1) {
+    nodes.push(...propsOf(at.from.mood, at.t, 1 - at.from.k, lod, shot.dy, sprites), ...propsOf(at.mood, at.t, at.from.k, lod, shot.dy, sprites))
+  } else {
+    nodes.push(...propsOf(at.mood, at.t, 1, lod, shot.dy, sprites))
+  }
+  return nodes
+}
+
+/** Nokta small (the band's, the speaker label's): the small pictures, props a little larger so they read. */
+export function avatarSvg(look: NoktaLook, pack: FramePack, at: Moment, px: number, sprites?: Sprites): string {
+  const nodes = figureNodes(look, pack, at, 's', 'small', false, CANVAS, sprites)
+  return toSvg(group(nodes), {
+    viewBox: [28, 12, 196, 196],
+    width: px,
+    height: px,
+    prefix: 'a',
+    title: `${look.name}: ${MOOD[at.mood].label}`,
+  })
+}
+
+/** The part of the stage the hero shows: from the props above the head to the shadow on the floor. */
+const HERO_TOP = 6
+const HERO_ROWS = 222
+
+/** The pane's top picture in the apps: Nokta on a soft stage, `width` x `height` pixels. */
+export function heroSvg(look: NoktaLook, pack: FramePack, at: Moment, width: number, height: number, sprites?: Sprites): string {
+  const scale = height / HERO_ROWS
+  const span = width / scale
+  const title = `${look.name}: ${MOOD[at.mood].label}`
+  const draw = (size: 'h' | 's'): string =>
+    toSvg(group(figureNodes(look, pack, at, size, 'full', true, span, sprites)), {
+      viewBox: [(CANVAS - span) / 2, HERO_TOP, span, HERO_ROWS],
+      width,
+      height,
+      prefix: 'h',
+      title,
+    })
+  const source = draw('h')
+  // a picture past the limit would be refused whole: the small one still shows Nokta
+  return source.length <= SVG_ROOM ? source : draw('s')
+}
+
+/** Terminal cells (24 columns, 12 rows of half blocks) of one picture of the pack; `undefined` if it has none. */
+export function terminalCells(pack: FramePack, frame: string): { cells: string; columns: number; rows: number } | undefined {
+  const f = pack.frames[frame]
+  if (f === undefined) return undefined
+  const size = Math.round(Math.sqrt(b64decode(f.c).length / 4))
+  return { cells: rasterCells(b64decode(f.c), size, size), columns: size, rows: Math.ceil(size / 2) }
 }

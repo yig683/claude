@@ -1,7 +1,7 @@
 {
   "name": "nokta",
-  "version": "1.2.0",
-  "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan kişisel ajan. Durumunu yüzüyle gösterir, adıyla seslenince karşılık verir, hatırlar, onay beklerken el kaldırır; panelinde işlerini izlersin.",
+  "version": "2.0.0",
+  "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan 3B karakter. Nefes alır, göz kırpar, çalışırken kaş çatar, onay beklerken el sallar, iş bitince zıplar; adıyla seslenince karşılık verir, hatırlar; paneli, bandı, durum satırı ve Türkçe kişiliğiyle.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "persona": {
@@ -49,6 +49,12 @@
       "description": "Masaüstü, VS Code ve mobilde her cevabın başına Nokta'nın küçük yüzü ve adı konur: konuşan o. Kapalıysa cevaplar olduğu gibi çizilir.",
       "default": true
     },
+    "motion": {
+      "type": "boolean",
+      "title": "Hareket",
+      "description": "Nokta hareket etsin: nefes alsın, göz kırpsın, el sallasın, zıplasın (panel ve çalışırken bant). Kapalıysa durağan çizilir; pil ya da işlemciyi korumak için /nokta hareket ile de kapatılır.",
+      "default": true
+    },
     "memory": {
       "type": "boolean",
       "title": "Hafıza",
@@ -60,16 +66,6 @@
       "title": "Ses",
       "description": "Onay beklerken, iş bitince ve sorun olunca kısa bir ses çal (macOS).",
       "default": false
-    },
-    "terminalImages": {
-      "type": "string",
-      "title": "Terminal görseli",
-      "description": "raster: her terminalde çalışan renkli hücre ızgarası. kitty: kitty ve Ghostty'de gerçek 3B görsel.",
-      "default": "raster",
-      "options": [
-        "raster",
-        "kitty"
-      ]
     },
     "sleepMinutes": {
       "type": "number",
@@ -86,7 +82,8 @@
   "keywords": [
     "character",
     "mascot",
-    "dots",
+    "3d",
+    "animated",
     "turkish",
     "status",
     "pane"

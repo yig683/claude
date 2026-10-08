@@ -1,4 +1,4 @@
-export type NoktaMood = 'neutral' | 'work' | 'ask' | 'approve' | 'happy' | 'worry' | 'sleep'
+export type NoktaMood = 'neutral' | 'work' | 'ask' | 'approve' | 'happy' | 'worry' | 'sleep' | 'love'
 export type NoktaBody = 'nokta' | 'bulut' | 'tavsan' | 'ucgen'
 export type NoktaColor = 'clay' | 'sky' | 'sage' | 'kraft' | 'ink' | 'peach'
 export type NoktaAccessory = 'none' | 'glasses' | 'beret' | 'bowtie'
@@ -43,6 +43,10 @@ declare module 'claude-code' {
       notes: string[]
       isBandHidden: boolean
       isQuiet: boolean
+      /** Motion is switched off: Nokta stands still. */
+      isStill: boolean
+      /** A counter the animation clock bumps, so the pane and the band redraw a frame. */
+      frame: number
     }
   }
 }

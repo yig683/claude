@@ -1,4 +1,5 @@
 """Blender (bpy) scene utilities: render setup, studio lighting, backdrop, materials, meshes."""
+import os
 import math
 import time
 import bpy
@@ -30,7 +31,9 @@ def reset():
     return bpy.context.scene
 
 
-def setup_render(w, h, samples=128, transparent=False, exposure=0.0, threads=4, denoise=True):
+def setup_render(w, h, samples=128, transparent=False, exposure=0.0, threads=None, denoise=True):
+    if threads is None:
+        threads = int(os.environ.get('NK_THREADS', '4'))
     sc = bpy.context.scene
     sc.render.engine = 'CYCLES'
     cy = sc.cycles

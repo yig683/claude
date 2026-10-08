@@ -10,8 +10,8 @@
     {
       "name": "nokta",
       "source": "./nokta",
-      "description": "Durumunu yüzüyle gösterir, adıyla seslenince karşılık verir, hatırlar, onay beklerken el kaldırır; panel, bant, durum satırı, Türkçe işlem çarkı, risk notları ve hafif bir Türkçe kişilik.",
-      "version": "1.2.0"
+      "description": "Claude Code'un içinde yaşayan 3B karakter: nefes alır, göz kırpar, çalışırken kaş çatar, onay beklerken el sallar, iş bitince zıplar; adıyla seslenince karşılık verir, hatırlar; panel, bant, durum satırı, Türkçe işlem çarkı, risk notları ve hafif bir Türkçe kişilik.",
+      "version": "2.0.0"
     }
   ]
 }

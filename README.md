@@ -1,11 +1,14 @@
 # Nokta
 
-Claude Code'un içinde yaşayan, yüzü olan küçük bir karakter. ChatGPT'nin "dots"u gibi bir arkadaş fikri, ama Claude Code'un kendi eklenti sistemiyle (fonksiyon kancaları) çalışıyor: oturumda ne olup bittiğini yüzüyle gösteriyor.
+Claude Code'un içinde yaşayan, yüzü olan, hareket eden 3B bir karakter. ChatGPT'nin "dots"u gibi bir arkadaş fikri, ama Claude Code'un kendi eklenti sistemiyle (fonksiyon kancaları) çalışıyor: oturumda ne olup bittiğini yüzüyle ve hareketiyle gösteriyor. Çalışırken kaş çatar ve bir yazı balonunda üç nokta yanar; onay beklerken el sallar; iş bitince zıplar; boştayken nefes alır, göz kırpar, etrafa bakar; uyuyunca `z`'ler çıkarır.
+
+![Nokta'nın hareketi](docs/animasyon.gif)
+
+Yukarıdaki, modun kendi koduyla üretilen karelerin (saniyede 10) oynatılmış hali: gerçek uygulama ekranı değil, aynı resimlerle kurulmuş bir önizleme.
 
 ![Nokta'nın ruh halleri ve görünümleri](docs/karakterler.png)
 
-Soldan sağa: hazır · çalışıyor · soru soruyor · onay bekliyor · tamamladı · sorun var · uyuyor.
-Gövdeler: Nokta, Bulut, Tavşan, Üçgen. Nokta'nın beş rengi ve üç aksesuarı (gözlük, bere, papyon) var.
+Soldan sağa, yukarıdan aşağı: hazır · çalışıyor · soru soruyor · onay bekliyor · tamamladı · sorun var · uyuyor · sevildi. Gövdeler: Nokta, Bulut, Tavşan, Üçgen. Nokta'nın beş rengi (kil, gök, adaçayı, kraft, mürekkep) ve üç aksesuarı (gözlük, bere, papyon) var: toplam 23 görünüm.
 
 ## Kurulum
 
@@ -36,24 +39,29 @@ Bu oturumlar bulutta, ekransız (headless) çalışır ve gözlemlediğim kadar�
 | Nerede | Ne görürsün |
 | --- | --- |
 | **Cevapların başında yüz** | Masaüstü, VS Code ve mobilde her cevabın başına Nokta'nın küçük yüzü ve adı konur: konuşan o. Terminalde cevabın kendi işareti kalır. Ayar: `messages`. |
-| **Panel** (`/nokta`) | Sıcak tonlu bir kart: büyük 3B Nokta (ruh haline göre hareket eder, göz kırpar), birinci ağızdan başlık ("Çalışıyorum.", "Onayını bekliyorum."), ruh hali hapı, süre ve araç sayısı; "Nokta'yı sev" düğmesi; "Şu an" adımları; modelin kendi görev listesi (TodoWrite / TaskCreate); **hafıza**; son işler; görünüm düğmeleri (gövde, renk, aksesuar, sessiz, bant). Masaüstünde ve geniş terminalde oturum başında kendiliğinden açılır. |
-| **Bant** (girdi kutusunun üstü) | `(• _ •) Nokta çalışıyor · Bash: npm test` ve bir `panel` düğmesi. Terminal ve masaüstünde. |
+| **Panel** (`/nokta`) | Büyük, hareketli 3B Nokta yumuşak bir sahnede (kendi renginde hale ve yerde gölge); altında adı, renkli durumu, yaptığı adım ve süre; "Nokta'yı sev" düğmesi; "Şu an" adımları; modelin kendi görev listesi (TodoWrite / TaskCreate); **hafıza**; son işler; görünüm düğmeleri (gövde, renk, aksesuar, hareket, sessiz, bant). Masaüstünde ve geniş terminalde oturum başında kendiliğinden açılır. |
+| **Bant** (girdi kutusunun üstü) | Küçük 3B yüz, `Nokta çalışıyor · Bash: npm test` ve bir `panel` düğmesi. Meşgulken yüz de hareket eder. Terminal ve masaüstünde. |
 | **Durum satırı** | Aynı bilgi tek satırda, girdi kutusunun altında. |
 | **Bildirimler** | Selam, "onayını bekliyor", "tamamladı · 42 sn · 5 araç", "bir sorun var". Ekran yoksa (bulut oturumu) aynı mesajlar sohbette sönük satır olarak çıkar. |
 | **İşlem çarkı** | "Nokta düşünüyor…", "Nokta kolları sıvadı…", tur sonunda "✻ Nokta tamamladı · 42 sn". |
-| **Onay anı** | Bir izin penceresi sana soru sormak üzereyken Nokta el kaldırır (mod kendiliğinden onaylıyorsa kaldırmaz); `rm -rf`, `git push --force`, `curl … \| sh`, `sudo`, paket kurulumu gibi komutların onay penceresinin altına tek satırlık düz Türkçe risk notu düşer. |
+| **Onay anı** | Bir izin penceresi sana soru sormak üzereyken Nokta el sallar (mod kendiliğinden onaylıyorsa sallamaz); `rm -rf`, `git push --force`, `curl … \| sh`, `sudo`, paket kurulumu gibi komutların onay penceresinin altına tek satırlık düz Türkçe risk notu düşer. |
 | **Adıyla seslenmek** | "Nokta" ya da "Merhaba Nokta" yazman, ona seslenmektir: model komut anlatmaz, kısa bir karşılık verir ve en son işinizi hatırlatıp sıradakini sorar. "Nokta, şunu yap" de olur. |
 | **Hafıza** | `/nokta hatırla hep Türkçe yaz` ya da konuşurken söylediğin kalıcı bir tercih: model `mcp__nokta__remember` aracıyla not alır (sen onaylarsın), sonraki oturumlarda sistem istemine **veri** olarak girer. `/nokta hafıza`, `/nokta unut 2`, panelde `×`. Parola, anahtar, token gibi şeyleri kaydetmez. |
+| **Sevmek** | `/nokta sev` ya da panelde düğme: Nokta kalpler çıkarır, gözleri gülümser; birkaç saniye sonra sakinleşir. |
 | **Kişilik** | Sistem istemine kısa bir bölüm eklenir: sen Nokta'sın, Türkçe yaz, kısa ve net ol, işe başlamadan önce ne yapacağını söyle, riskli adımdan önce nedenini söyle. Kapatılabilir. |
 | **Ses** | Onay, bitiş ve hata için kısa üç nota (macOS). Varsayılan kapalı. |
-| **Uyku ve göz kırpma** | Belirli süre (varsayılan 20 dk) hareketsiz kalırsa uyur ve nefes alır, yazınca uyanır. Boştayken, çalışırken, soru sorarken zaman zaman göz kırpar. |
+| **Uyku** | Belirli süre (varsayılan 20 dk) hareketsiz kalırsa uyur: gözleri kapanır, yavaş yavaş nefes alır, `z`'ler yükselir; yazınca uyanır. |
 
-Her yüzey kendi çizim tablosunu kullanır:
+## Nasıl hareket ediyor
 
-| Yüzey | Resim |
-| --- | --- |
-| Terminal | Yarım blok (`▀ ▄`) hücre ızgarası, 24 × 12 hücre, her terminalde. `terminalImages: kitty` ve kitty / Ghostty / WezTerm'de gerçek 3B PNG. |
-| Masaüstü, VS Code, mobil | Durağan SVG'ler (etkileşimli çerçeve değil: masaüstü o çerçevede 3B görseli engelliyor ve beyaz zemin açıyor). Panelin üst kartı tek bir resim: 3B render, vücudun renginde yumuşak bir hale, ruh haline göre rozet (üç nokta, `?`, `!`, kıvılcım, ter damlası, `z`), serif başlık, küçük harfli etiket ve hap; metinler hem koyu hem açık temada okunsun diye vurgu rengi ve gri ile yazılır. Hareket SMIL ile (nefes, zıplama, sallanma, göz kırpma); yüzey SMIL'i çalıştırmazsa resim durağan kalır. Bant tek satır, küçük yüzle; cevapların başında 26 px'lik yüz. |
+Karakterin kendisi gerçek bir 3B model: gövdeler işaretli uzaklık alanlarıyla (SDF) kodla modellendi, yüz (göz, kaş, ağız, yanak), kollar ve aksesuarlar Blender'da Cycles ile render edildi. Her görünüm için 25 resim var: göz açık / yarı kapalı / kapalı, sağa ve sola bakış, el sallamanın üç konumu, kolları havaya kaldırmanın iki hali, ağız ve kaş değişimleri. `nokta/hooks/motion.ts` bir "yönetmen": bir ruh hali ve bir an (saniye) verilince hangi resmin gösterileceğine (ne zaman göz kırpacağı, nereye bakacağı, elin hangi konumda olduğu) ve resmin nasıl hareket edeceğine (nefes, süzülme, zıplama sırasında ezilip uzama, eğilme) karar verir. Aynı an her zaman aynı kareyi verir.
+
+Saniyede on kare şöyle çizilir:
+
+- **Masaüstü, VS Code, mobil:** her kare yeni bir SVG: yumuşak sahne, gölge, resim ve yüzen küçük 3B şeyler (yazı balonu ve noktaları, `!`, `?`, `z`, kıvılcım, kalp, ter damlası, konfeti; bunlar da Blender'dan). Hareket yüzeyin SMIL desteğine **bağlı değil**: kareleri motorun saati sırayla üretiyor. Saat yalnızca Nokta'ya bakıldığı sürece çalışır: panel çizildiği sürece, bant için de Nokta meşgulken. Panel kapanınca ya da gizlenince kendiliğinden durur. Mod değiştiğinde yeni resim eskisinin üstüne yarım saniyede biner (Nokta hiçbir an yarım kalmaz).
+- **Terminal:** 32 × 16 hücre (yarım bloklar `▀ ▄`). Yönetmen yeni bir resim isteyince hücreler yerinde boyanır (`$.ui.blit`), isteyene kadar bir şey çizilmez.
+
+Hareketi kapatmak için `/nokta hareket`, panelde "Hareket" düğmesi ya da `motion` ayarı: Nokta durağan, açık gözlü ve sakin çizilir; işlemci ya da pil için.
 
 ![Terminal hücreleri](docs/terminal-hucre.png)
 
@@ -61,11 +69,9 @@ Yukarıdaki resim, terminalin çizeceği hücrelerin (modun kendi koduyla üreti
 
 ![Masaüstü SVG'leri](docs/masaustu-svg.png)
 
-Aşağıdaki, masaüstü penceresinin **benzetimi**: gerçek uygulama ekran görüntüsü değil, modun ürettiği SVG'lerin aynısıyla ve yaklaşık yerleşimle kurulmuş bir önizleme (solda cevap başlarındaki yüz ve tek satırlık bant, sağda panel).
+Aşağıdaki, masaüstü penceresinin **benzetimi**: gerçek uygulama ekran görüntüsü değil, modun ürettiği SVG'lerin aynısıyla ve yaklaşık yerleşimle kurulmuş bir önizleme (solda cevap başlarındaki yüz ve tek satırlık bant, sağda panel; koyu ve açık tema).
 
 ![Masaüstü benzetimi](docs/masaustu-benzetim.png)
-
-Her ruh halinin iki hali var: render'lı SVG, ve yanında açık renkli kutuda render yüklenemezse görünecek vektör yedek yüz. Bir yüzey `<image>` içindeki veri adresini temizlerse Nokta yine de yüzsüz kalmaz.
 
 ## Komutlar
 
@@ -80,13 +86,14 @@ Her ruh halinin iki hali var: render'lı SVG, ve yanında açık renkli kutuda r
 /nokta gövde tavşan        nokta | bulut | tavşan | üçgen
 /nokta renk adaçayı        kil | gök | adaçayı | kraft | mürekkep (yalnızca Nokta gövdesi)
 /nokta aksesuar bere       yok | gözlük | bere | papyon (yalnızca Nokta gövdesi)
+/nokta hareket             hareketi aç/kapat
 /nokta sessiz              bildirim ve sesleri aç/kapat
 /nokta bant                bandı ve durum satırını göster/gizle
 /nokta kapat               paneli kapat
 /nokta yardım
 ```
 
-Türkçe harfler yazılmasa da olur (`tavsan`, `gok`, `adacayi`). Panelde aynı şeyleri düğmelerle yaparsın; panel odaktayken `g` gövde, `r` renk, `a` aksesuar, `s` sessiz, `b` bant, `v` sev, `k` kapat.
+Türkçe harfler yazılmasa da olur (`tavsan`, `gok`, `adacayi`). Panelde aynı şeyleri düğmelerle yaparsın; panel odaktayken (terminalde) `g` gövde, `r` renk, `a` aksesuar, `h` hareket, `s` sessiz, `b` bant, `v` sev, `k` kapat.
 
 ## Ayarlar
 
@@ -100,9 +107,9 @@ Kurulumda sorulur, sonra `/config` menüsünde satır olarak durur:
 | `greet` | açık | Oturum başında kısa selam. |
 | `riskNotes` | açık | Onay isteyen riskli komutların altına not. |
 | `messages` | açık | Masaüstü, VS Code ve mobilde cevapların başına Nokta'nın yüzü ve adı. |
+| `motion` | açık | Hareket: nefes, göz kırpma, el sallama, zıplama. Kapalıysa durağan çizilir. |
 | `memory` | açık | Hafıza: `remember` aracı ve hafıza bölümü. Kapalıysa hiçbiri eklenmez. |
 | `sound` | kapalı | Ses (macOS). |
-| `terminalImages` | `raster` | `kitty`: kitty ve Ghostty'de gerçek görsel. |
 | `sleepMinutes` | 20 | Bu kadar dakika hareketsizse uyur. |
 
 ## Nasıl çalışır
@@ -116,17 +123,22 @@ Her ruh hali bir olaydan gelir:
 | onay bekliyor | `classic.PermissionRequest`: bir izin penceresi sana soruluyor (motorun `tool.check` kararı `ask` tek başına yetmez: mod bazen kendi onaylar) |
 | tamamladı | `turn.complete`, neden `answer` (7 saniye sonra hazıra döner) |
 | sorun var | `turn.complete`, neden `error` ya da `refusal` |
+| sevildi | `/nokta sev` ya da panelde düğme (3,6 saniye) |
 | hazır / uyuyor | boşta; `sleepMinutes` dolunca uyur |
 
 Kod `nokta/hooks/` altında:
 
-- `register.tsx`: tüm kancalar ve `$` kullanan her şey (motorun doğrulayıcısı `$`'ı yalnızca bu dosyadaki üst düzey işlevlerde izler).
+- `register.tsx`: tüm kancalar ve `$` kullanan her şey (motorun doğrulayıcısı `$`'ı yalnızca bu dosyadaki üst düzey işlevlerde izler): olaylar, komutlar, hafıza, animasyon saati.
+- `motion.ts`: yönetmen (hangi resim, nasıl hareket) ve yüzen şeylerin yerleşimi. Saf.
+- `art.ts`: resimleri SVG'ye ve terminal hücrelerine çevirir. Saf.
+- `gfx.ts`: SVG üreten küçük sahne ağacı. Saf.
 - `model.ts`: saf mantık (görünüm, ruh halleri, Türkçe kelime katlama, risk notları, kişilik metni).
-- `art.ts`: saf çizim (hücreler, SVG, base64).
 - `view.tsx`: panel ve bant ağaçları.
-- `tests/nokta.test.ts`: 55 test.
+- `tests/nokta.test.ts`: 67 test.
 
-Durum `$.state` altında `nokta.*` anahtarlarında (`types/index.d.ts`), kalıcı olanlar (görünüm, tercihler, son işler) `$.store`'da.
+Resimler `nokta/assets/` altında: `looks/<gövde>-<renk>-<aksesuar>.json` her görünümün 25 resmini (büyük ve küçük WebP, terminal için 32 × 32 piksel) taşır; `props.json` yüzen küçük şeyleri; `sounds/` üç notayı.
+
+Durum `$.state` altında `nokta.*` anahtarlarında (`types/index.d.ts`), kalıcı olanlar (görünüm, tercihler, son işler, notlar) `$.store`'da.
 
 ## Gizlilik
 
@@ -137,12 +149,12 @@ Nokta hiçbir ağ isteği yapmaz. Yazdıkları yalnızca yerel: görünüm ve te
 Dürüst olmak gerekirse:
 
 - **Bulut oturumlarında resim yok.** Bu oturum türünde ekran çizen bir yüzey bağlı değil (yukarıda Kurulum). Nokta'nın resimleri terminalde, masaüstü uygulamasının yerel oturumlarında ve VS Code'da çizilir.
-- **Çizimi gerçek yüzeylerde görmedim.** Bu mod bir bulut ortamında yazıldı: terminalde Ink'in ve masaüstü sayfasının gerçek boyasını göremedim. Doğrulananlar: `claude plugin validate`, `tsc`, ve `claude plugin test` ile 55 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor, `Raster` hücreleri dahil). SVG'ler Chromium'da, hücreler görüntüye geri çevrilerek elle bakıldı.
+- **Gerçek masaüstünde hareketi akıcı görüp görmediğimi söyleyemem.** Bu mod bir bulut ortamında yazıldı. Doğrulananlar: `claude plugin validate`, `tsc`, `claude plugin test` ile 67 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor), gerçek motorda `/nokta` komutları, ve SVG kareleri Chromium'da gerçek resimlerle elle görüldü. Akıcılık yüzeyin yeniden çizim hızına bağlı; saniyede 10 kare isteniyor, yüzey daha yavaş çiziyorsa hareket daha az akıcı görünür (`Hareket` kapatılabilir).
+- **Resim biçimi WebP.** Her kare bir SVG içinde `data:image/webp` olarak gider; Chromium (masaüstü uygulaması, VS Code) bunu çizer. Bir yüzey bu adresi temizlerse yüz görünmez.
 - **El ne zaman iner?** Motor "onayladın" diye bir olay vermiyor. Nokta, çağrı döndüğünde işine döner. Onayladığın uzun bir komut çalışırken el havada görünebilir.
-- **SVG hareketi** (nefes, rozet) yüzeyin SMIL desteğine bağlı; çalışmazsa durağan resim görünür.
 - **Ses** macOS'ta `afplay` ile; Linux ve Windows'ta çalmaz.
-- **Gerçek 3B görsel** terminalde yalnızca kitty protokolünü bilenlerde (kitty, Ghostty, WezTerm). Diğerlerinde hücre ızgarası.
-- Renk ve aksesuar yalnızca Nokta gövdesinde; Bulut, Tavşan ve Üçgen'in rengi sabit.
+- Renk ve aksesuar yalnızca Nokta gövdesinde; Bulut, Tavşan ve Üçgen'in rengi sabit (her görünümün 25 resmi ayrı render edilir).
+- Terminalde resim yarım bloklarla çizilir (32 × 16 hücre); kitty/Ghostty'ye özel görsel seçeneği 2.0'da kaldırıldı.
 - Fonksiyon kancaları API'si erken erişimde (bu mod Claude Code 2.1.294'e göre yazıldı); sürümler arasında değişebilir.
 
 ## Görselleri yeniden üretmek
@@ -150,7 +162,9 @@ Dürüst olmak gerekirse:
 3B karakterler Blender'ın Cycles'ı ile (python modülü `bpy`) üretildi; sayısal modelleme (SDF) ve yüz yerleşimi Python'da. Her şey `tools/nokta-render/` altında; ayrıntı orada.
 
 ```
-python batch_icons.py                     # 161 şeffaf 512 px görsel
-python build_assets.py <görseller> ../../nokta   # modun assets/icons ve raster.json dosyaları
-python make_sounds.py ../../nokta         # üç kısa nota
+python batch_anim.py                     # her görünümün 25 karesi (şeffaf 320 px), kaldığı yerden devam eder
+python batch_sprites.py                  # yüzen küçük şeyler
+python build_looks.py out/frames ../../nokta   # nokta/assets/looks/*.json
+python build_props.py out/sprites ../../nokta  # nokta/assets/props.json
+python make_sounds.py ../../nokta        # üç kısa nota
 ```

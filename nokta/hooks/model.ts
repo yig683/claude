@@ -56,9 +56,9 @@ export function normalizeLook(look: Partial<NoktaLook> | undefined): NoktaLook {
   return { name, body, color, accessory }
 }
 
-/** The file stem of the icon for a look in a mood: assets/icons/<key>.png */
-export function iconKey(look: NoktaLook, mood: NoktaMood): string {
-  return `${look.body}-${look.color}-${look.accessory}-${mood}`
+/** The look after a change of body: the new body in its own colour, undressed. */
+export function withBody(look: NoktaLook, body: NoktaBody): NoktaLook {
+  return { name: look.name, body, color: DEFAULT_COLOR[body], accessory: 'none' }
 }
 
 export const MOOD: Record<NoktaMood, { label: string; face: string; color: string; ui: string; headline: string }> = {
@@ -69,6 +69,7 @@ export const MOOD: Record<NoktaMood, { label: string; face: string; color: strin
   happy: { label: 'tamamladı', face: '(^ ▿ ^)', color: '#2D8A4E', ui: '#3FA864', headline: 'Tamamladım!' },
   worry: { label: 'sorun var', face: '(• ~ •)', color: '#A3322A', ui: '#D9534A', headline: 'Bir sorun var.' },
   sleep: { label: 'uyuyor', face: '(- _ -)', color: '#8A867D', ui: '#9A968E', headline: 'Dinleniyorum.' },
+  love: { label: 'sevildi', face: '(♡ ‿ ♡)', color: '#C8456B', ui: '#E8688A', headline: 'Bunu sevdim.' },
 }
 
 export function clip(text: string, max: number): string {
@@ -259,6 +260,7 @@ export const HELP = [
   '/nokta gövde <nokta|bulut|tavşan|üçgen>',
   '/nokta renk <kil|gök|adaçayı|kraft|mürekkep>   (yalnızca Nokta gövdesi)',
   '/nokta aksesuar <yok|gözlük|bere|papyon>       (yalnızca Nokta gövdesi)',
+  '/nokta hareket    hareketi aç/kapat (kapalıyken Nokta durağan çizilir)',
   '/nokta sessiz     bildirim ve sesleri aç/kapat',
   '/nokta bant       durum bandını göster/gizle',
   '/nokta yardım     bu liste',

@@ -25,6 +25,7 @@ export type PaneData = {
   /** A short room (an inline pane, a small window): no big picture, fewer lines. */
   isCompact: boolean
   isQuiet: boolean
+  isStill: boolean
   isBandHidden: boolean
   isTerminal: boolean
   isMemory: boolean
@@ -35,6 +36,7 @@ export type PaneActions = {
   cycleColor: () => Promise<void>
   cycleAccessory: () => Promise<void>
   toggleQuiet: () => Promise<void>
+  toggleStill: () => Promise<void>
   toggleBand: () => Promise<void>
   close: () => Promise<void>
   pet: () => Promise<void>
@@ -94,7 +96,8 @@ export function statsLine(d: Pick<PaneData, 'mood' | 'elapsed' | 'jobs'>): strin
 export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Element): JSX.Element {
   const { Box, Text } = U
   const m = MOOD[d.mood]
-  const isHero = !d.isTerminal && !d.isCompact // the remote surfaces get one designed card on top
+  const tint = d.isTerminal ? m.color : m.ui
+  const isHero = !d.isTerminal && !d.isCompact // the apps get one drawn picture on top, centred
   // beside the picture on a wide terminal; everywhere else the picture sits on top, centred
   const isSideBySide = d.isTerminal && !d.isCompact && d.columns >= 56
   const room = d.isCompact ? 3 : Math.max(3, Math.min(8, d.rows - 24))
@@ -107,15 +110,21 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
   const detail =
     d.detail === '' || d.mood === 'neutral' || d.mood === 'sleep' ? '' : clip(d.detail, Math.max(12, d.columns - 8))
 
+  // who this is and what it is doing: the name, a coloured state, the step, the time
   const identity = (
     <Box flexDirection="column" flexGrow={isSideBySide ? 1 : 0} alignItems={isSideBySide ? 'flex-start' : 'center'}>
-      <Text bold>{d.look.name}</Text>
-      <Text color={m.color} bold>
-        {m.face} {m.label}
-      </Text>
-      <Text dimColor wrap="truncate-end">
-        {detail === '' ? ' ' : detail}
-      </Text>
+      <Box flexDirection="row" gap={1}>
+        <Text bold>{d.look.name}</Text>
+        <Text color={tint} bold>
+          {d.isTerminal ? `${m.face} ` : '● '}
+          {m.label}
+        </Text>
+      </Box>
+      {detail !== '' && (
+        <Text dimColor wrap="truncate-end">
+          {detail}
+        </Text>
+      )}
       <Text dimColor wrap="truncate-end">
         {statsLine(d)}
       </Text>
@@ -127,11 +136,11 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
       {d.isCompact ? (
         <Box flexDirection="column">
           <Box flexDirection="row" gap={1}>
-            <Text color={m.color} bold>
+            <Text color={tint} bold>
               {m.face}
             </Text>
             <Text bold>{d.look.name}</Text>
-            <Text color={m.color}>{m.label}</Text>
+            <Text color={tint}>{m.label}</Text>
           </Box>
           <Text dimColor wrap="truncate-end">
             {statsLine(d)}
@@ -140,7 +149,8 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
       ) : isHero ? (
         <Box flexDirection="column" alignItems="center" gap={1}>
           {avatar}
-          {Btn(U, false, { key: 'pet', label: "♡ Nokta'yı sev", onPress: a.pet, isPrimary: true })}
+          {identity}
+          {Btn(U, false, { key: 'pet', label: "♡ Nokta'yı sev", onPress: a.pet })}
         </Box>
       ) : isSideBySide ? (
         <Box flexDirection="row" gap={2} alignItems="center">
@@ -250,6 +260,12 @@ export function paneBody(U: Common, d: PaneData, a: PaneActions, avatar: JSX.Ele
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap={d.isTerminal ? 2 : 1} rowGap={d.isTerminal ? 0 : 1}>
           {Btn(U, d.isTerminal, {
+            key: 'motion',
+            label: `Hareket: ${d.isStill ? 'kapalı' : 'açık'}`,
+            onPress: a.toggleStill,
+            hotkey: 'h',
+          })}
+          {Btn(U, d.isTerminal, {
             key: 'quiet',
             label: `Sessiz: ${d.isQuiet ? 'açık' : 'kapalı'}`,
             onPress: a.toggleQuiet,
@@ -279,6 +295,7 @@ export type BandData = {
   /** What to say when nothing is going on (how the last job went, or that it rests). */
   note: string
   columns: number
+  isTerminal: boolean
 }
 
 /** The band above the prompt: one slim line, the picture (where the surface draws one) at its left. */
@@ -290,6 +307,7 @@ export function bandRow(
 ): JSX.Element {
   const { Box, Text, Button } = U
   const m = MOOD[d.mood]
+  const tint = d.isTerminal ? m.color : m.ui
   const isBusy = d.mood === 'work' || d.mood === 'ask' || d.mood === 'approve'
   const room = Math.max(10, d.columns - (face === undefined ? 36 : 40))
   const doing = d.detail === '' || d.mood === 'neutral' || d.mood === 'sleep' ? '' : d.detail
@@ -298,12 +316,12 @@ export function bandRow(
   return (
     <Box flexDirection="row" gap={1} alignItems="center">
       {face ?? (
-        <Text color={m.color} bold>
+        <Text color={tint} bold>
           {m.face}
         </Text>
       )}
       <Text bold>{d.look.name}</Text>
-      <Text color={m.color} bold>
+      <Text color={tint} bold>
         {m.label}
       </Text>
       {d.columns >= 56 && (

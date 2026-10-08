@@ -1,7 +1,8 @@
-// Nokta: a character that lives inside Claude Code. Its face follows what the session does:
+// Nokta: a character that lives inside Claude Code. Its 3D model follows what the session does:
 // it works while tools run, raises a hand when a call waits for approval, asks, rejoices,
-// worries, sleeps. Pane, band above the prompt, status line, toasts, spinner words, a /nokta
-// command and a light Turkish persona; everything is optional in the manifest's userConfig.
+// worries, sleeps, and it moves (breathes, blinks, hops). Pane, band above the prompt, status line,
+// toasts, spinner words, a /nokta command and a light Turkish persona; everything is optional in
+// the manifest's userConfig.
 //
 // Everything that touches `$` lives in this file, as top-level functions: the engine's validator
 // follows `$` only through those. The other files (model, art, view) are pure.
@@ -9,8 +10,8 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, PluginOptions, Register, RenderSurface, Timer } from 'claude-code'
 
 import type { NoktaJob, NoktaLook, NoktaMood, NoktaStep, NoktaTodo } from '../types'
-import type { RasterPack } from './art'
-import { avatarSvg, b64decode, canBlink, heroSvg, rasterCells } from './art'
+import type { FramePack, Moment } from './art'
+import { avatarSvg, heroSvg, isPack, isSprites, terminalCells } from './art'
 import {
   ACCESSORIES,
   ACCESSORY_LABEL,
@@ -26,7 +27,6 @@ import {
   fmtDuration,
   fold,
   HELP,
-  iconKey,
   isSummon,
   MAX_NOTES,
   memoryText,
@@ -41,8 +41,11 @@ import {
   spinnerWord,
   summonHint,
   titleOf,
+  withBody,
   withNote,
 } from './model'
+import type { Sprites } from './motion'
+import { shotOf } from './motion'
 import type { PaneActions } from './view'
 import { bandRow, paneBody, statsLine } from './view'
 
@@ -51,8 +54,14 @@ type Dollar = EngineInterface
 const PANE = 'nokta'
 const MAX_JOBS = 12
 const HAPPY_MS = 7000
-const BLINK_EVERY_MS = 4300
-const BLINK_MS = 170
+const LOVE_MS = 3600
+/** How long the pictures take to change over when Nokta's mood changes, in seconds. */
+const CHANGE_S = 0.35
+/** The pose a still Nokta (motion off) and the speaker label stand in: eyes open, mid-breath. */
+const STILL_T = 0.4
+/** Milliseconds between frames while Nokta moves: quick when it is busy, slow while it dozes. */
+const FRAME_MS: Record<NoktaMood, number> = { neutral: 125, work: 100, ask: 100, approve: 100, happy: 100, worry: 100, sleep: 250, love: 100 }
+const TERMINAL_FRAME_MS = 125
 
 const moodA = atom({ plugin: 'nokta', key: 'mood' } as const, 'neutral')
 const detailA = atom({ plugin: 'nokta', key: 'detail' } as const, '')
@@ -63,6 +72,9 @@ const jobsA = atom({ plugin: 'nokta', key: 'jobs' } as const, [])
 const bandHiddenA = atom({ plugin: 'nokta', key: 'isBandHidden' } as const, false)
 const quietA = atom({ plugin: 'nokta', key: 'isQuiet' } as const, false)
 const notesA = atom({ plugin: 'nokta', key: 'notes' } as const, [])
+const stillA = atom({ plugin: 'nokta', key: 'isStill' } as const, false)
+/** Bumped by the animation clock: whatever draws Nokta reads it, so it is drawn again for each frame. */
+const frameA = atom({ plugin: 'nokta', key: 'frame' } as const, 0)
 
 type Settings = {
   isPersona: boolean
@@ -71,7 +83,7 @@ type Settings = {
   isGreeting: boolean
   isRiskNote: boolean
   isSound: boolean
-  isKittyWanted: boolean
+  isMotion: boolean
   isMemory: boolean
   isMessages: boolean
   sleepMs: number
@@ -85,22 +97,30 @@ let opt: Settings = {
   isGreeting: true,
   isRiskNote: true,
   isSound: false,
-  isKittyWanted: false,
+  isMotion: true,
   isMemory: true,
   isMessages: true,
   sleepMs: 20 * 60_000,
 }
 let lastActiveAt = -1
 let isTurnActive = false
-let isKitty = false
 let hasGreeted = false
-let blinks = 0
 let pets = 0
 let tick: Timer | undefined
 let tickMs = 1000
-let packOnce: Promise<RasterPack | undefined> | undefined
-const pngCache = new Map<string, string | undefined>()
-const cellCache = new Map<string, { cells: string; columns: number; rows: number }>()
+// the animation: when it began, the mood being shown and the one it is changing from, the timers, who is looking
+let epoch = -1
+let shownMood: NoktaMood = 'neutral'
+let fromMood: NoktaMood = 'neutral'
+let changedAt = 0
+let frameTimer: Timer | undefined
+let frameEvery = 0
+let terminalTimer: Timer | undefined
+let lastTerminalFrame = ''
+let paneAt = -1e9
+const packs = new Map<string, Promise<FramePack | undefined>>()
+let spritesOnce: Promise<Sprites | undefined> | undefined
+const cellCache = new WeakMap<FramePack, Map<string, { cells: string; columns: number; rows: number } | undefined>>()
 const svgCache = new Map<string, string>()
 
 function readSettings(options: PluginOptions): Settings {
@@ -112,7 +132,7 @@ function readSettings(options: PluginOptions): Settings {
     isGreeting: options['greet'] !== false,
     isRiskNote: options['riskNotes'] !== false,
     isSound: options['sound'] === true,
-    isKittyWanted: options['terminalImages'] === 'kitty',
+    isMotion: options['motion'] !== false,
     isMemory: options['memory'] !== false,
     isMessages: options['messages'] !== false,
     sleepMs: Math.max(1, Number(options['sleepMinutes']) || 20) * 60_000,
@@ -151,83 +171,93 @@ function readJobs(raw: unknown): NoktaJob[] {
   return jobs.slice(0, MAX_JOBS)
 }
 
-// ------------------------------------------------------------------ assets
+// ------------------------------------------------------------------ assets and animation
 
-/** The raster pack (small RGBA pictures for terminal cells), read once. */
-function loadPack($: Dollar): Promise<RasterPack | undefined> {
-  if (packOnce === undefined) {
-    packOnce = (async () => {
+const lookKey = (look: NoktaLook): string => `${look.body}-${look.color}-${look.accessory}`
+
+/** One look's rendered pictures (assets/looks/<look>.json), read once; `undefined` where the file is not there. */
+function readPack($: Dollar, key: string): Promise<FramePack | undefined> {
+  let hit = packs.get(key)
+  if (hit === undefined) {
+    hit = (async () => {
       try {
-        const text = await $.fs.read(`${$.plugin.root}/assets/raster.json`)
-        const pack = JSON.parse(typeof text === 'string' ? text : '') as RasterPack
-        return typeof pack.width === 'number' && typeof pack.height === 'number' ? pack : undefined
+        const text = await $.fs.read(`${$.plugin.root}/assets/looks/${key}.json`)
+        const value: unknown = JSON.parse(typeof text === 'string' ? text : '')
+        return isPack(value) ? value : undefined
+      } catch {
+        return undefined
+      }
+    })()
+    if (packs.size >= 4) {
+      const oldest = packs.keys().next().value
+      if (oldest !== undefined) packs.delete(oldest)
+    }
+    packs.set(key, hit)
+  }
+  return hit
+}
+
+/** The small 3D things that float around Nokta (assets/props.json), read once; none where the file is not there. */
+function loadSprites($: Dollar): Promise<Sprites | undefined> {
+  if (spritesOnce === undefined) {
+    spritesOnce = (async () => {
+      try {
+        const text = await $.fs.read(`${$.plugin.root}/assets/props.json`)
+        const value: unknown = JSON.parse(typeof text === 'string' ? text : '')
+        return isSprites(value) ? value : undefined
       } catch {
         return undefined
       }
     })()
   }
-  return packOnce
+  return spritesOnce
 }
 
-/** The render of a look in a mood as base64 PNG (the small one for the band), or `undefined` where the file is not there. */
-async function loadPng($: Dollar, look: NoktaLook, mood: NoktaMood, isSmall = false): Promise<string | undefined> {
-  const key = `${isSmall ? 's/' : ''}${iconKey(look, mood)}`
-  if (pngCache.has(key)) return pngCache.get(key)
-  let value: string | undefined
-  try {
-    const file = await $.fs.read(
-      `${$.plugin.root}/assets/${isSmall ? 'icons-s' : 'icons'}/${iconKey(look, mood)}.png`,
-      { as: 'bytes' },
-    )
-    value = isRecord(file) && typeof file['base64'] === 'string' ? file['base64'] : undefined
-  } catch {
-    value = undefined
+/** The pictures of a look: its own, else the same one undressed, else its body in the body's own colour. */
+async function loadPack($: Dollar, look: NoktaLook): Promise<FramePack | undefined> {
+  const tries = [lookKey(look), lookKey({ ...look, accessory: 'none' }), lookKey({ ...look, color: DEFAULT_COLOR[look.body], accessory: 'none' })]
+  for (const key of tries) {
+    const pack = await readPack($, key)
+    if (pack !== undefined) return pack
   }
-  if (pngCache.size > 40) pngCache.clear()
-  pngCache.set(key, value)
-  return value
+  return undefined
 }
 
-/** The terminal cells of a look in a mood; `undefined` where the pack lacks the picture. */
-async function loadCells(
-  $: Dollar,
-  look: NoktaLook,
-  mood: NoktaMood,
-): Promise<{ cells: string; columns: number; rows: number } | undefined> {
-  const key = iconKey(look, mood)
-  const cached = cellCache.get(key)
-  if (cached !== undefined) return cached
-  const pack = await loadPack($)
-  const rgba = pack?.rgba[key]
-  if (pack === undefined || rgba === undefined) return undefined
-  const art = {
-    cells: rasterCells(b64decode(rgba), pack.width, pack.height),
-    columns: pack.width,
-    rows: Math.ceil(pack.height / 2),
+/** Where the animation is now: seconds since it began, and how far a change of mood has come. */
+async function momentNow($: Dollar, mood: NoktaMood, isStill = false): Promise<Moment> {
+  if (isStill) return { mood, t: STILL_T }
+  const now = await $.clock.now()
+  if (epoch < 0) epoch = now
+  const t = (now - epoch) / 1000
+  if (mood !== shownMood) {
+    fromMood = shownMood
+    shownMood = mood
+    changedAt = t
   }
-  cellCache.set(key, art)
-  return art
+  const k = (t - changedAt) / CHANGE_S
+  return k < 1 && fromMood !== mood ? { mood, t, from: { mood: fromMood, k } } : { mood, t }
 }
 
-/** Nokta's picture on the terminal: cells (or a kitty image); only the pane has one there. */
-async function terminalAvatar(
-  $: Dollar,
-  table: unknown,
-  look: NoktaLook,
-  mood: NoktaMood,
-): Promise<JSX.Element> {
+/** Terminal cells of one picture, kept: the cells of a picture never change. */
+function cellsOf(pack: FramePack, frame: string): { cells: string; columns: number; rows: number } | undefined {
+  let byFrame = cellCache.get(pack)
+  if (byFrame === undefined) {
+    byFrame = new Map()
+    cellCache.set(pack, byFrame)
+  }
+  if (!byFrame.has(frame)) byFrame.set(frame, terminalCells(pack, frame))
+  return byFrame.get(frame)
+}
+
+/** Nokta's picture on the terminal: colour cells of the 3D model; only the pane has one there. */
+async function terminalAvatar($: Dollar, table: unknown, look: NoktaLook, mood: NoktaMood): Promise<JSX.Element> {
   const m = MOOD[mood]
-  const { Raster, Image, Text } = table as Elements['terminal']
-  if (opt.isKittyWanted && isKitty) {
-    const png = await loadPng($, look, mood)
-    if (png !== undefined) {
-      return <Image key="nokta-avatar" source={{ png }} columns={20} rows={10} alt={m.face} />
-    }
-  }
-  const art = await loadCells($, look, mood)
-  if (art !== undefined) {
-    return <Raster key="nokta-avatar" columns={art.columns} rows={art.rows} cells={art.cells} />
-  }
+  const { Raster, Text } = table as Elements['terminal']
+  const pack = await loadPack($, look)
+  const frame = shotOf(mood, STILL_T).frame
+  lastTerminalFrame = frame
+  const art = pack === undefined ? undefined : cellsOf(pack, frame)
+  if (art !== undefined) return <Raster key="nokta-avatar" columns={art.columns} rows={art.rows} cells={art.cells} />
   return (
     <Text bold color={m.color}>
       {m.face}
@@ -236,9 +266,9 @@ async function terminalAvatar(
 }
 
 /**
- * A small still picture of Nokta for the remote surfaces (the band's, the speaker label's). A still SVG,
- * never an "interactive" one: the surface draws that kind in a sandboxed frame with a white background
- * that also refuses the render's <image>. Motion is SMIL inside the SVG; where it does not run, it is still.
+ * A small picture of Nokta for the remote surfaces (the band's, the speaker label's). A still SVG, never an
+ * "interactive" one: the surface draws that kind in a sandboxed frame with a white background that also
+ * refuses pictures. The band moves (each frame is a new picture); the label stands still.
  */
 async function smallAvatar(
   $: Dollar,
@@ -246,53 +276,93 @@ async function smallAvatar(
   look: NoktaLook,
   mood: NoktaMood,
   px: number,
+  isLive: boolean,
 ): Promise<JSX.Element | undefined> {
   const { Svg } = table as Elements['desktop']
-  const [png, pack] = await Promise.all([loadPng($, look, mood, true), loadPack($)])
-  if (png === undefined) return undefined
-  const cacheKey = `${iconKey(look, mood)}|${px}|${look.name}`
-  let source = svgCache.get(cacheKey)
-  if (source === undefined) {
-    source = avatarSvg({ look, mood, png, disc: pack?.disc[iconKey(look, mood)], size: px, animated: true, glow: false })
-    if (svgCache.size > 40) svgCache.clear()
-    svgCache.set(cacheKey, source)
+  const pack = await loadPack($, look)
+  if (pack === undefined) return undefined
+  let source: string | undefined
+  if (isLive) {
+    // with no clock running nothing would ever redraw it: it stands in the calm pose, not in a blink
+    const isMoving = frameTimer !== undefined && !(await read($, stillA))
+    source = avatarSvg(look, pack, await momentNow($, mood, !isMoving), px, await loadSprites($))
+  } else {
+    const cacheKey = `${lookKey(look)}|${px}|${look.name}`
+    source = svgCache.get(cacheKey)
+    if (source === undefined) {
+      source = avatarSvg(look, pack, { mood: 'neutral', t: STILL_T }, px)
+      if (svgCache.size > 40) svgCache.clear()
+      svgCache.set(cacheKey, source)
+    }
   }
   return <Svg source={source} alt={`${look.name}: ${MOOD[mood].label}`} width={px} height={px} />
 }
 
-/** The pane's top card on the remote surfaces: Nokta big on a warm card, in its own words. */
-async function heroFor(
-  $: Dollar,
-  table: unknown,
-  look: NoktaLook,
-  mood: NoktaMood,
-  d: { columns: number; detail: string; elapsed: number; tools: number; note: string },
-): Promise<JSX.Element> {
+/** The pane's top picture in the apps: the 3D Nokta on a soft stage. */
+async function heroFor($: Dollar, table: unknown, look: NoktaLook, mood: NoktaMood, columns: number): Promise<JSX.Element | undefined> {
   const { Svg } = table as Elements['desktop']
-  const m = MOOD[mood]
-  const [png, blinkPng, pack] = await Promise.all([
-    loadPng($, look, mood),
-    canBlink(mood) ? loadPng($, look, 'sleep') : Promise.resolve(undefined),
-    loadPack($),
+  const pack = await loadPack($, look)
+  if (pack === undefined) return undefined
+  const width = Math.max(160, Math.round(columns * 8) - 8)
+  const height = Math.min(240, Math.round(width * 0.95))
+  const at = await momentNow($, mood, await read($, stillA))
+  const source = heroSvg(look, pack, at, width, height, await loadSprites($))
+  return <Svg source={source} alt={`${look.name}: ${MOOD[mood].label}`} width={width} height={height} />
+}
+
+/** Starts and stops the animation clocks to match who is looking; called each second and whenever that may have changed. */
+async function conduct($: Dollar): Promise<void> {
+  const [surfaces, isStill, mood, isBandHidden, now] = await Promise.all([
+    $.session.surfaces(),
+    read($, stillA),
+    read($, moodA),
+    read($, bandHiddenA),
+    $.clock.now(),
   ])
-  const isBusy = mood === 'work' || mood === 'ask' || mood === 'approve'
-  const doing = d.detail === '' || mood === 'neutral' || mood === 'sleep' ? '' : d.detail
-  const first = m.label.charAt(0).toLocaleUpperCase('tr') + m.label.slice(1)
-  const hero = heroSvg({
-    look,
-    mood,
-    png,
-    blinkPng,
-    disc: pack?.disc[iconKey(look, mood)],
-    width: Math.round(d.columns * 8) - 8,
-    label: `${look.name} · ${mood === 'work' ? 'şu an' : mood === 'sleep' ? 'dinleniyor' : 'burada'}`,
-    headline: m.headline,
-    chip: isBusy && d.elapsed > 0 ? `${first} · ${fmtDuration(d.elapsed)}` : first,
-    lines: isBusy ? [doing, `${d.tools} araç`].filter(line => line !== '') : [d.note],
-  })
-  return (
-    <Svg source={hero.source} alt={`${look.name}: ${m.label}`} width={hero.width} height={hero.height} />
-  )
+  const isOn = opt.isMotion && !isStill
+  // the pane may be closed or hidden: it counts as looked at only while it keeps being drawn; the band is always there,
+  // and moves only for a busy mood (a calm Nokta in the band stands still: the pane is where it lives)
+  const isBusy = mood !== 'neutral' && mood !== 'sleep'
+  const isBand = opt.band !== 'kapali' && !isBandHidden && isBusy
+  const wantsApp = isOn && surfaces.some(one => one !== 'terminal') && (now - paneAt < 1500 || isBand)
+  // a phone gets its pictures over a network: half as many
+  const isPhoneOnly = surfaces.includes('mobile') && !surfaces.includes('desktop') && !surfaces.includes('vscode')
+  const ms = isPhoneOnly ? Math.max(FRAME_MS[mood], 250) : FRAME_MS[mood]
+  if (!wantsApp || frameEvery !== ms) {
+    frameTimer?.cancel()
+    frameTimer = undefined
+    frameEvery = 0
+  }
+  if (wantsApp && frameTimer === undefined) {
+    frameEvery = ms
+    frameTimer = $.clock.every(ms, () => {
+      void safe(() => update($, frameA, n => (n + 1) % 1_000_000))
+    })
+  }
+  const panes = surfaces.includes('terminal') ? await $.ui.panes() : []
+  const wantsTerminal = isOn && panes.some(pane => pane.id === PANE && pane.isShown && pane.isPlaced)
+  if (!wantsTerminal) {
+    terminalTimer?.cancel()
+    terminalTimer = undefined
+  } else if (terminalTimer === undefined) {
+    terminalTimer = $.clock.every(TERMINAL_FRAME_MS, () => {
+      void safe(() => terminalFrame($))
+    })
+  }
+}
+
+/** One frame of the terminal pane: the picture the director asks for, painted in place when it changed. */
+async function terminalFrame($: Dollar): Promise<void> {
+  const [look, mood] = await Promise.all([read($, lookA), read($, moodA)])
+  const pack = await loadPack($, look)
+  if (pack === undefined) return
+  const at = await momentNow($, mood)
+  const frame = shotOf(mood, at.t).frame
+  if (frame === lastTerminalFrame) return
+  const art = cellsOf(pack, frame)
+  if (art === undefined) return
+  lastTerminalFrame = frame
+  await $.ui.blit({ requestId: PANE, key: 'nokta-avatar', cells: art.cells, columns: art.columns, rows: art.rows })
 }
 
 // ------------------------------------------------------------------ state and display
@@ -321,6 +391,8 @@ async function showMood($: Dollar, mood: NoktaMood, detail?: string): Promise<vo
   await update($, moodA, () => mood)
   if (detail !== undefined) await update($, detailA, () => detail)
   await syncStatus($)
+  // a mood may change who needs frames (a sleeper needs fewer, the band moves only for an active mood)
+  await safe(() => conduct($))
 }
 
 /** A toast, unless Nokta was told to be quiet. */
@@ -358,13 +430,20 @@ async function editLook($: Dollar, change: (look: NoktaLook) => NoktaLook): Prom
 }
 
 async function savePrefs($: Dollar): Promise<void> {
-  const [isBandHidden, isQuiet] = await Promise.all([read($, bandHiddenA), read($, quietA)])
-  await $.store.set('prefs', { isBandHidden, isQuiet })
+  const [isBandHidden, isQuiet, isStill] = await Promise.all([read($, bandHiddenA), read($, quietA), read($, stillA)])
+  await $.store.set('prefs', { isBandHidden, isQuiet, isStill })
 }
 
 async function toggleQuiet($: Dollar): Promise<boolean> {
   const next = await update($, quietA, quiet => !quiet)
   await savePrefs($)
+  return next
+}
+
+async function toggleStill($: Dollar): Promise<boolean> {
+  const next = await update($, stillA, still => !still)
+  await savePrefs($)
+  await conduct($)
   return next
 }
 
@@ -418,12 +497,12 @@ async function pet($: Dollar, isSilent: boolean): Promise<string> {
   pets += 1
   const look = await read($, lookA)
   const line = PET_LINES[pets % PET_LINES.length] ?? 'Hıh!'
-  await showMood($, 'happy', 'sevildi')
-  if (!isSilent) await say($, 'happy', `${look.name}: ${line}`, 2500)
+  await showMood($, 'love', 'sevildi')
+  if (!isSilent) await say($, 'love', `${look.name}: ${line}`, 2500)
   await chime($, 'done')
-  $.clock.after(3500, () => {
+  $.clock.after(LOVE_MS, () => {
     void safe(async () => {
-      if (!isTurnActive && (await read($, moodA)) === 'happy') await showMood($, 'neutral', '')
+      if (!isTurnActive && (await read($, moodA)) === 'love') await showMood($, 'neutral', '')
     })
   })
   return line
@@ -431,15 +510,14 @@ async function pet($: Dollar, isSilent: boolean): Promise<string> {
 
 function actions($: Dollar): PaneActions {
   return {
-    cycleBody: () =>
-      editLook($, look => {
-        const body = nextOf(BODIES, look.body)
-        return { name: look.name, body, color: body === 'nokta' ? 'clay' : DEFAULT_COLOR[body], accessory: 'none' }
-      }),
+    cycleBody: () => editLook($, look => withBody(look, nextOf(BODIES, look.body))),
     cycleColor: () => editLook($, look => ({ ...look, color: nextOf(COLORS, look.color) })),
     cycleAccessory: () => editLook($, look => ({ ...look, accessory: nextOf(ACCESSORIES, look.accessory) })),
     toggleQuiet: async () => {
       await toggleQuiet($)
+    },
+    toggleStill: async () => {
+      await toggleStill($)
     },
     toggleBand: async () => {
       await toggleBand($)
@@ -458,6 +536,10 @@ function actions($: Dollar): PaneActions {
 async function openPane($: Dollar): Promise<string | undefined> {
   const look = await read($, lookA)
   const opened = await $.ui.open({ id: PANE, title: look.name })
+  if (opened.isPlaced) {
+    paneAt = await $.clock.now()
+    await safe(() => conduct($))
+  }
   return opened.isPlaced ? undefined : opened.reason
 }
 
@@ -519,17 +601,13 @@ async function begin($: Dollar, isInteractive: boolean): Promise<void> {
   if (isRecord(savedPrefs)) {
     await update($, bandHiddenA, () => savedPrefs['isBandHidden'] === true)
     await update($, quietA, () => savedPrefs['isQuiet'] === true)
+    await update($, stillA, () => savedPrefs['isStill'] === true)
   }
   if ((await read($, jobsA)).length === 0) {
     await update($, jobsA, () => readJobs(savedJobs))
   }
   await update($, notesA, () => readNotes(savedNotes))
   await touch($)
-
-  const term = (await $.env.get('TERM')) ?? ''
-  const program = (await $.env.get('TERM_PROGRAM')) ?? ''
-  const kittyWindow = (await $.env.get('KITTY_WINDOW_ID')) ?? ''
-  isKitty = kittyWindow !== '' || /kitty|ghostty/i.test(term) || /ghostty|wezterm/i.test(program)
 
   await $.command.register({
     name: 'nokta',
@@ -559,8 +637,9 @@ async function begin($: Dollar, isInteractive: boolean): Promise<void> {
   const first = surfaces.find(one => one === 'terminal' || one === 'desktop') ?? surfaces[0] ?? null
   if (isInteractive || first !== null) await welcome($, first)
 
-  $.clock.every(BLINK_EVERY_MS, () => {
-    void safe(() => blink($))
+  // the animation clocks run only while Nokta is looked at; this once a second sees to that
+  $.clock.every(1000, () => {
+    void safe(() => conduct($))
   })
 
   // Nokta dozes off when nothing has happened for a while.
@@ -571,43 +650,6 @@ async function begin($: Dollar, isInteractive: boolean): Promise<void> {
     if (mood === 'neutral' && lastActiveAt >= 0 && now - lastActiveAt > opt.sleepMs) {
       await safe(() => showMood($, 'sleep', ''))
     }
-  })
-}
-
-/** Now and then, in the terminal pane, the sleeping face for a moment: a blink. */
-async function blink($: Dollar): Promise<void> {
-  if (opt.isKittyWanted && isKitty) return // that pane holds a real image, not cells
-  if ((await read($, moodA)) !== 'neutral') return
-  if (!(await $.session.surfaces()).includes('terminal')) return
-  const panes = await $.ui.panes()
-  if (!panes.some(pane => pane.id === PANE && pane.isShown && pane.isPlaced)) return
-  const look = await read($, lookA)
-  const [closed, open] = await Promise.all([loadCells($, look, 'sleep'), loadCells($, look, 'neutral')])
-  if (closed === undefined || open === undefined) return
-  const paint = (art: { cells: string; columns: number; rows: number }): Promise<unknown> =>
-    $.ui.blit({ requestId: PANE, key: 'nokta-avatar', cells: art.cells, columns: art.columns, rows: art.rows })
-  blinks += 1
-  const isDouble = blinks % 3 === 0
-  await paint(closed)
-  $.clock.after(BLINK_MS, () => {
-    void safe(async () => {
-      // if the mood moved meanwhile, the redraw has painted the new face already
-      if ((await read($, moodA)) !== 'neutral') return
-      await paint(open)
-      if (isDouble) {
-        $.clock.after(BLINK_MS, () => {
-          void safe(async () => {
-            if ((await read($, moodA)) !== 'neutral') return
-            await paint(closed)
-            $.clock.after(BLINK_MS, () => {
-              void safe(async () => {
-                if ((await read($, moodA)) === 'neutral') await paint(open)
-              })
-            })
-          })
-        })
-      }
-    })
   })
 }
 
@@ -870,7 +912,7 @@ export const register: Register = (on, options) => {
     }
     if (sub === 'sev' || sub === 'pet') {
       const line = await pet($, true)
-      return { text: `${MOOD.happy.face} ${look.name}: ${line}` }
+      return { text: `${MOOD.love.face} ${look.name}: ${line}` }
     }
     if (sub === 'hatirla' || sub === 'remember') {
       if (!opt.isMemory) return { text: 'Hafıza kapalı (ayar: memory).' }
@@ -912,10 +954,7 @@ export const register: Register = (on, options) => {
       if (body === undefined) {
         return { text: `Gövde: ${BODIES.map(b => BODY_LABEL[b]).join(', ')}. Örnek: /nokta gövde tavşan` }
       }
-      await saveLook(
-        $,
-        normalizeLook({ name: look.name, body, color: body === 'nokta' ? 'clay' : DEFAULT_COLOR[body], accessory: 'none' }),
-      )
+      await saveLook($, normalizeLook(withBody(look, body)))
       return { text: `Gövde: ${BODY_LABEL[body]}.` }
     }
     if (sub === 'renk' || sub === 'color') {
@@ -942,6 +981,10 @@ export const register: Register = (on, options) => {
       const isQuiet = await toggleQuiet($)
       return { text: isQuiet ? 'Sessiz: bildirimler ve sesler kapalı.' : 'Sessiz kapandı: bildirimler açık.' }
     }
+    if (sub === 'hareket' || sub === 'motion' || sub === 'animasyon') {
+      const isStill = await toggleStill($)
+      return { text: isStill ? 'Hareket kapalı: Nokta durağan.' : 'Hareket açık.' }
+    }
     if (sub === 'bant' || sub === 'band') {
       const isHidden = await toggleBand($)
       return { text: isHidden ? 'Bant ve durum satırı gizlendi.' : 'Bant ve durum satırı açık.' }
@@ -952,7 +995,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const U = $.ui.resolve(e)
     const { Text } = U
-    const [look, mood, detail, steps, todos, jobs, isQuiet, isBandHidden, notes] = await Promise.all([
+    const [look, mood, detail, steps, todos, jobs, isQuiet, isBandHidden, notes, isStill] = await Promise.all([
       read($, lookA),
       read($, moodA),
       read($, detailA),
@@ -962,8 +1005,11 @@ export const register: Register = (on, options) => {
       read($, quietA),
       read($, bandHiddenA),
       read($, notesA),
+      read($, stillA),
     ])
+    await read($, frameA) // drawn again for each frame of the animation
     const now = await $.clock.now()
+    paneAt = now
     const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
     const rows = e.props.scroll.bodyRows
     // a short room (an inline pane, a small window) gets a line of text instead of the big picture
@@ -973,13 +1019,7 @@ export const register: Register = (on, options) => {
       ? undefined
       : e.surface === 'terminal'
         ? await terminalAvatar($, U, look, mood)
-        : await heroFor($, U, look, mood, {
-            columns: e.props.bodyColumns,
-            detail,
-            elapsed,
-            tools: run?.tools ?? 0,
-            note: statsLine({ mood, elapsed, jobs }),
-          })
+        : await heroFor($, U, look, mood, e.props.bodyColumns)
     return paneBody(
       U,
       {
@@ -996,6 +1036,7 @@ export const register: Register = (on, options) => {
         rows,
         isCompact,
         isQuiet,
+        isStill,
         isBandHidden,
         isTerminal: e.surface === 'terminal',
       },
@@ -1015,7 +1056,8 @@ export const register: Register = (on, options) => {
     const [look, detail, jobs] = await Promise.all([read($, lookA), read($, detailA), read($, jobsA)])
     const now = await $.clock.now()
     const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
-    const face = e.surface === 'terminal' ? undefined : await smallAvatar($, U, look, mood, 30)
+    await read($, frameA) // drawn again for each frame of the animation
+    const face = e.surface === 'terminal' ? undefined : await smallAvatar($, U, look, mood, 30, true)
     return bandRow(
       U,
       {
@@ -1026,6 +1068,7 @@ export const register: Register = (on, options) => {
         tools: run?.tools ?? 0,
         note: statsLine({ mood, elapsed: run === undefined ? 0 : (now - run.startedAt) / 1000, jobs }),
         columns: e.props.bodyColumns,
+        isTerminal: e.surface === 'terminal',
       },
       face,
       async () => {
@@ -1044,7 +1087,7 @@ export const register: Register = (on, options) => {
     }
     const look = await read($, lookA)
     const U = $.ui.resolve(e)
-    const face = await smallAvatar($, U, look, 'neutral', 26)
+    const face = await smallAvatar($, U, look, 'neutral', 26, false)
     if (face === undefined) return next(e)
     const { Box, Text } = U
     return (
