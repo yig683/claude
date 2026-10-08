@@ -1,0 +1,15 @@
+{
+  "name": "nokta",
+  "owner": { "name": "yig683" },
+  "metadata": {
+    "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan karakter"
+  },
+  "plugins": [
+    {
+      "name": "nokta",
+      "source": "./nokta",
+      "description": "Durumunu yüzüyle gösterir, onay beklerken el kaldırır; panel, bant, durum satırı, Türkçe işlem çarkı, risk notları ve hafif bir Türkçe kişilik.",
+      "version": "1.0.0"
+    }
+  ]
+}

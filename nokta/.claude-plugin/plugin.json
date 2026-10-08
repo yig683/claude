@@ -1,0 +1,84 @@
+{
+  "name": "nokta",
+  "version": "1.0.0",
+  "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan kişisel ajan. Durumunu yüzüyle gösterir, onay beklerken el kaldırır, panelinde işlerini izlersin.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "persona": {
+      "type": "string",
+      "title": "Kişilik",
+      "description": "hafif: Nokta Türkçe, kısa ve net konuşur (sistem istemine kısa bir bölüm eklenir). kapali: hiçbir şey eklenmez.",
+      "default": "hafif",
+      "options": [
+        "hafif",
+        "kapali"
+      ]
+    },
+    "band": {
+      "type": "string",
+      "title": "Durum bandı",
+      "description": "Girdi kutusunun üstündeki ince Nokta bandı. hep: her zaman. etkinken: yalnızca çalışırken, soru sorarken ve onay beklerken. kapali: hiç.",
+      "default": "hep",
+      "options": [
+        "hep",
+        "etkinken",
+        "kapali"
+      ]
+    },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Paneli otomatik aç",
+      "description": "Oturum başında Nokta panelini aç (geniş ekranda). /nokta ile her zaman açılır.",
+      "default": true
+    },
+    "greet": {
+      "type": "boolean",
+      "title": "Selam ver",
+      "description": "Oturum başında kısa bir selam bildirimi göster.",
+      "default": true
+    },
+    "riskNotes": {
+      "type": "boolean",
+      "title": "Risk notu",
+      "description": "Onay isteyen riskli komutların altına Nokta'nın kısa notunu ekle.",
+      "default": true
+    },
+    "sound": {
+      "type": "boolean",
+      "title": "Ses",
+      "description": "Onay beklerken, iş bitince ve sorun olunca kısa bir ses çal (macOS).",
+      "default": false
+    },
+    "terminalImages": {
+      "type": "string",
+      "title": "Terminal görseli",
+      "description": "raster: her terminalde çalışan renkli hücre ızgarası. kitty: kitty ve Ghostty'de gerçek 3B görsel.",
+      "default": "raster",
+      "options": [
+        "raster",
+        "kitty"
+      ]
+    },
+    "sleepMinutes": {
+      "type": "number",
+      "title": "Uyku süresi (dakika)",
+      "description": "Bu kadar süre hareketsiz kalırsa Nokta uyur.",
+      "default": 8,
+      "min": 1,
+      "max": 240
+    }
+  },
+  "author": {
+    "name": "yig683"
+  },
+  "keywords": [
+    "character",
+    "mascot",
+    "dots",
+    "turkish",
+    "status",
+    "pane"
+  ],
+  "homepage": "https://github.com/yig683/claude",
+  "repository": "https://github.com/yig683/claude"
+}
