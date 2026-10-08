@@ -4,11 +4,15 @@ Claude Code'un içinde yaşayan, yüzü olan karakter. Oturumda ne olduğunu yü
 
 ## Kurulum
 
+Terminalde `claude` aç ve istemde:
+
 ```
 /plugin install nokta --marketplace yig683/claude
 ```
 
-`Add marketplace?` sorusuna `y`, kapsam olarak `user`, sonra ayarlar. Kurulduğu oturumda hemen çalışır.
+`Add marketplace?` sorusuna `y`, kapsam olarak `user`, sonra ayarlar. Kurulduğu oturumda hemen çalışır. Masaüstü uygulamasının yerel oturumları da (terminalde `user` kapsamıyla kurulmuşsa) yükler.
+
+Bulut oturumlarında (telefon, web) ekran çizen bir yüzey bağlı olmadığı için panel, bant ve durum satırı görünmez; yalnızca kişilik, `/nokta` yanıtları ve sohbet satırları çalışır. Ayrıntı: [README](../README.md).
 
 ## Kullanım
 

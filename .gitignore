@@ -5,3 +5,4 @@ nokta/.claude-plugin/types/
 tools/nokta-render/out/
 __pycache__/
 *.pyc
+nokta/tsconfig.json

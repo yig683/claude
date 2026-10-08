@@ -75,6 +75,7 @@ type EngineOptions = {
   files?: Record<string, string | { base64: string }>
   onRegister?: (name: string) => void
   onToast?: (text: string) => void
+  onLog?: (text: string) => void
   onOpen?: (id: string) => void
   /** Why the pane cannot be seated, when it cannot. */
   unplaced?: string
@@ -99,14 +100,23 @@ function engine(on: On, options: EngineOptions = {}): Seen {
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('tool.call', () => (options.isRefused === true ? { deny: 'reddedildi' } : { result: 'tamam' }))
   on('tool.check', () => ({ decision: options.verdict ?? 'allow' }))
+  on('classic.PermissionRequest', () => ({}))
   on('ui.render', ($, e) => {
     // what the engine itself draws where the plugin steps aside
     const { Text } = $.ui.resolve(e)
     const words = e.component === 'Spinner' ? `engine spinner: ${e.props.word}` : `engine ${e.component}`
     return Text({ children: words })
   })
-  on('session.attach', (_$, e) => ({ clientId: e.clientId }))
-  on('session.surfaces', () => ({ value: options.surfaces ?? ['terminal'] }))
+  const attached: RenderSurface[] = [...(options.surfaces ?? ['terminal'])]
+  on('session.attach', (_$, e) => {
+    if (!attached.includes(e.surface)) attached.push(e.surface)
+    return { clientId: e.clientId }
+  })
+  on('session.surfaces', () => ({ value: attached }))
+  on('ui.log', (_$, e) => {
+    options.onLog?.(e.text)
+    return { value: undefined }
+  })
   on('fs.read', (_$, e) => {
     const hit = Object.entries(options.files ?? {}).find(([end]) => e.path.endsWith(end))
     if (hit === undefined) throw new Error(`ENOENT: ${e.path}`)
@@ -446,7 +456,7 @@ describe('a session', () => {
 
 describe('a turn', () => {
   test('tools become steps, the hand rises for approval, the job closes happy', async ($, on) => {
-    const seen = engine(on, { verdict: 'ask' })
+    const seen = engine(on)
     await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
 
     await $.turn.start({ text: 'testleri düzelt', turnId: 't1' })
@@ -457,21 +467,36 @@ describe('a turn', () => {
     expect(steps(seen)?.[0]?.label).toBe('Read: app.ts')
     expect(steps(seen)?.[0]?.status).toBe('ok')
 
-    // a call that waits for the person: the verdict is "ask"
-    const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf dist' }, tool_use_id: 'u2' })
-    expect(verdict.decision).toBe('ask')
+    // a permission dialog is about to ask the person
+    await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf dist' } })
     expect(mood(seen)).toBe('approve')
+    expect(seen['detail']).toBe('Bash: rm -rf dist')
 
-    // a query asked by a plugin is no call: nobody raises a hand for it
-    await $.turn.start({ text: 'ikinci', turnId: 't2' })
-    expect(mood(seen)).toBe('work')
-    await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
+    // the call returns: back to work
+    await $.tool.call({ tool: 'Bash', command: 'rm -rf dist' })
     expect(mood(seen)).toBe('work')
 
-    await $.turn.complete({ answer: 'bitti', durationMs: 42_000, isAborted: false, turnId: 't2', reason: 'answer' })
+    await $.turn.complete({ answer: 'bitti', durationMs: 42_000, isAborted: false, turnId: 't1', reason: 'answer' })
     expect(mood(seen)).toBe('happy')
     expect(jobs(seen)?.[0]?.status).toBe('ok')
     expect(jobs(seen)?.[0]?.seconds).toBe(42)
+  })
+
+  test('a verdict of "ask" alone raises no hand: a mode may settle it without anyone being asked', async ($, on) => {
+    const seen = engine(on, { verdict: 'ask' })
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'çalış', turnId: 't1' })
+    const verdict = await $.tool.check({ tool: 'Bash', input: { command: 'ls' }, tool_use_id: 'u1' })
+    expect(verdict.decision).toBe('ask')
+    expect(mood(seen)).toBe('work')
+  })
+
+  test('a question to the person is a question, not an approval', async ($, on) => {
+    const seen = engine(on)
+    await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+    await $.turn.start({ text: 'sor', turnId: 't1' })
+    await $.classic.PermissionRequest({ tool_name: 'AskUserQuestion', tool_input: { questions: [] } })
+    expect(mood(seen)).toBe('work')
   })
 
   test('the model\'s own todo list shows up in the pane', async ($, on) => {
@@ -593,6 +618,54 @@ describe('/nokta', () => {
     expect(opened).toEqual(['nokta'])
     expect((await $.command.run(run('durum'))).text).toContain('hazır')
     expect((await $.command.run(run('yardım'))).text).toContain('/nokta gövde')
+  })
+})
+
+describe('a session no screen is attached to (a cloud session seen from an app)', () => {
+  test('Nokta speaks in the transcript instead of toasts', async ($, on) => {
+    const lines: string[] = []
+    const toasts: string[] = []
+    engine(on, { surfaces: [], onLog: text => lines.push(text), onToast: text => toasts.push(text) })
+    await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+    await $.turn.start({ text: 'işi yap', turnId: 't1' })
+    for (const name of ['a', 'b', 'c']) await $.tool.call({ tool: 'Read', file_path: `/work/${name}.ts` })
+    await $.turn.complete({ answer: 'bitti', durationMs: 9_000, isAborted: false, turnId: 't1', reason: 'answer' })
+    expect(toasts).toEqual([])
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toMatch(/^\(\^ ▿ \^\) Nokta: tamamladı · 9 sn · 3 araç$/)
+  })
+
+  test('the raised hand is a line too, and quiet mutes it', async ($, on) => {
+    const lines: string[] = []
+    engine(on, { surfaces: [], onLog: text => lines.push(text) })
+    await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+    await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf dist' } })
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('onayını bekliyor')
+    expect(lines[0]).toContain('Bash: rm -rf dist')
+    await $.command.run({
+      command: 'nokta',
+      args: 'sessiz',
+      origin: { kind: 'composer' },
+      presentation: { isFullscreen: false, columns: 80 },
+    })
+    await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'ls' } })
+    expect(lines.length).toBe(1)
+  })
+
+  test('/nokta tells where it can be seen instead of opening a pane that cannot be drawn', async ($, on) => {
+    const opened: string[] = []
+    engine(on, { surfaces: [], onOpen: id => opened.push(id) })
+    await $.session.start({ cwd: '/work', surface: null, isInteractive: false })
+    const answer = await $.command.run({
+      command: 'nokta',
+      args: '',
+      origin: { kind: 'composer' },
+      presentation: { isFullscreen: false, columns: 80 },
+    })
+    expect(answer.text).toContain('(• ‿ •) Nokta · hazır')
+    expect(answer.text).toContain('/plugin install nokta --marketplace yig683/claude')
+    expect(opened).toEqual([])
   })
 })
 

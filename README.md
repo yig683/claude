@@ -9,17 +9,27 @@ Gövdeler: Nokta, Bulut, Tavşan, Üçgen. Nokta'nın beş rengi ve üç aksesua
 
 ## Kurulum
 
-Bir Claude Code oturumunun istemine şunu yaz:
+Nokta'nın resimleri (panel, bant, durum satırı, bildirimler) bir **ekrana** çizilir; yani Claude Code'un ekran çizebilen bir yüzeyde çalışması gerekir. Hangisinde olduğuna göre:
+
+### Terminalde (önerilen)
+
+Bilgisayarında bir terminal aç, `claude` yaz, ardından istemde:
 
 ```
 /plugin install nokta --marketplace yig683/claude
 ```
 
-Sırasıyla: `Add marketplace?` sorusuna `y`, kapsam olarak `user`, ardından ayarlar ekranı. `Installed nokta. Plugin is now active.` satırını görünce Nokta o oturumda çalışıyordur; sonraki oturumlarda kendiliğinden gelir.
+Sırasıyla: `Add marketplace?` sorusuna `y`, kapsam olarak `user` (Enter), ayarlar ekranı (Enter, varsayılanlar iyidir). `Installed nokta. Plugin is now active.` satırını görünce Nokta o oturumda çalışıyordur; sonraki oturumlarda kendiliğinden gelir. Depo özelse GitHub'a giriş yapmış olman gerekir.
 
 Geliştirirken klasörden yüklemek için: `claude --plugin-dir ./nokta`
 
-`/plugin install` terminalin komutudur; masaüstü uygulamasının Code sekmesindeki yerel oturumlarda "kullanılamıyor" der. Terminalde `user` kapsamıyla kurulan eklenti o oturumlarda da yüklenir ve masaüstü yüzeyinde çizilir.
+### Masaüstü uygulaması (Code sekmesi, yerel oturumlar)
+
+`/plugin install` komutu orada "kullanılamıyor" der. Önce yukarıdaki gibi **terminalde** `user` kapsamıyla kur; o zaman masaüstü uygulamasının yerel oturumları da Nokta'yı yükler ve masaüstü yüzeyinde çizer.
+
+### Bulut oturumları (telefon, web, uygulamadan açılan)
+
+Bu oturumlar bulutta, ekransız (headless) çalışır ve gözlemlediğim kadarıyla uygulama Nokta'nın çizim isteklerini karşılayan bir yüzey olarak bağlanmıyor: motor günlüğü `nothing attached draws` diyor. Sonuç: Nokta yüklenir ve çalışır ama **panel, bant ve durum satırı görünmez**. Görünenler: kişilik (model Nokta'nın tonuyla konuşur), `/nokta` ve `/nokta durum` yanıtları ve sohbette sönük satırlar (`\(• ▿ •) Nokta: onayını bekliyor · Bash: …`, `(^ ▿ ^) Nokta: tamamladı · 42 sn · 5 araç`). Yeni bir bulut oturumunda yüklemek için Claude'a "depodaki `nokta/` klasörünü mod olarak yükle" demen yeter; mod, o oturumun mod klasörüne konup oturumda kendiliğinden yüklenir.
 
 ## Ne yapar
 
@@ -28,9 +38,9 @@ Geliştirirken klasörden yüklemek için: `claude --plugin-dir ./nokta`
 | **Panel** (`/nokta`) | Büyük 3B Nokta, adı, ruh hali, süre ve araç sayısı; "Şu an" adımları; modelin kendi görev listesi (TodoWrite / TaskCreate); son işler; görünüm düğmeleri (gövde, renk, aksesuar, sessiz, bant). Geniş terminalde oturum başında kendiliğinden açılır. |
 | **Bant** (girdi kutusunun üstü) | `(• _ •) Nokta çalışıyor · Bash: npm test` ve bir `panel` düğmesi. Terminal ve masaüstünde. |
 | **Durum satırı** | Aynı bilgi tek satırda, girdi kutusunun altında. |
-| **Bildirimler** | Selam, "onayını bekliyor", "tamamladı · 42 sn · 5 araç", "bir sorun var". |
+| **Bildirimler** | Selam, "onayını bekliyor", "tamamladı · 42 sn · 5 araç", "bir sorun var". Ekran yoksa (bulut oturumu) aynı mesajlar sohbette sönük satır olarak çıkar. |
 | **İşlem çarkı** | "Nokta düşünüyor…", "Nokta kolları sıvadı…", tur sonunda "✻ Nokta tamamladı · 42 sn". |
-| **Onay anı** | Bir araç çağrısı senin onayını beklerken Nokta el kaldırır; `rm -rf`, `git push --force`, `curl … \| sh`, `sudo`, paket kurulumu gibi komutların onay penceresinin altına tek satırlık düz Türkçe risk notu düşer. |
+| **Onay anı** | Bir izin penceresi sana soru sormak üzereyken Nokta el kaldırır (mod kendiliğinden onaylıyorsa kaldırmaz); `rm -rf`, `git push --force`, `curl … \| sh`, `sudo`, paket kurulumu gibi komutların onay penceresinin altına tek satırlık düz Türkçe risk notu düşer. |
 | **Kişilik** | Sistem istemine kısa bir bölüm eklenir: Türkçe yaz, kısa ve net ol, işe başlamadan önce ne yapacağını söyle, riskli adımdan önce nedenini söyle. Kapatılabilir. |
 | **Ses** | Onay, bitiş ve hata için kısa üç nota (macOS). Varsayılan kapalı. |
 | **Uyku ve göz kırpma** | Belirli süre hareketsiz kalırsa uyur, yazınca uyanır. Terminal panelinde, boştayken, zaman zaman göz kırpar. |
@@ -90,7 +100,7 @@ Her ruh hali bir olaydan gelir:
 | --- | --- |
 | çalışıyor | tur başladı (`turn.start`) ya da bir araç çağrısı sürüyor (`tool.call`) |
 | soru soruyor | model `AskUserQuestion` çağırdı |
-| onay bekliyor | `tool.check` kararı `ask`: çağrı senin onayını bekliyor |
+| onay bekliyor | `classic.PermissionRequest`: bir izin penceresi sana soruluyor (motorun `tool.check` kararı `ask` tek başına yetmez: mod bazen kendi onaylar) |
 | tamamladı | `turn.complete`, neden `answer` (7 saniye sonra hazıra döner) |
 | sorun var | `turn.complete`, neden `error` ya da `refusal` |
 | hazır / uyuyor | boşta; `sleepMinutes` dolunca uyur |
@@ -101,7 +111,7 @@ Kod `nokta/hooks/` altında:
 - `model.ts`: saf mantık (görünüm, ruh halleri, Türkçe kelime katlama, risk notları, kişilik metni).
 - `art.ts`: saf çizim (hücreler, SVG, base64).
 - `view.tsx`: panel ve bant ağaçları.
-- `tests/nokta.test.ts`: 37 test.
+- `tests/nokta.test.ts`: 42 test.
 
 Durum `$.state` altında `nokta.*` anahtarlarında (`types/index.d.ts`), kalıcı olanlar (görünüm, tercihler, son işler) `$.store`'da.
 
@@ -113,7 +123,8 @@ Nokta hiçbir ağ isteği yapmaz. Yazdıkları yalnızca yerel: görünüm ve te
 
 Dürüst olmak gerekirse:
 
-- **Çizimi gerçek yüzeylerde görmedim.** Bu mod bir bulut ortamında yazıldı: terminalde Ink'in ve masaüstü sayfasının gerçek boyasını göremedim. Doğrulananlar: `claude plugin validate`, `tsc`, ve `claude plugin test` ile 37 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor, `Raster` hücreleri dahil). SVG'ler Chromium'da, hücreler görüntüye geri çevrilerek elle bakıldı.
+- **Bulut oturumlarında resim yok.** Bu oturum türünde ekran çizen bir yüzey bağlı değil (yukarıda Kurulum). Nokta'nın resimleri terminalde, masaüstü uygulamasının yerel oturumlarında ve VS Code'da çizilir.
+- **Çizimi gerçek yüzeylerde görmedim.** Bu mod bir bulut ortamında yazıldı: terminalde Ink'in ve masaüstü sayfasının gerçek boyasını göremedim. Doğrulananlar: `claude plugin validate`, `tsc`, ve `claude plugin test` ile 42 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor, `Raster` hücreleri dahil). SVG'ler Chromium'da, hücreler görüntüye geri çevrilerek elle bakıldı.
 - **El ne zaman iner?** Motor "onayladın" diye bir olay vermiyor. Nokta, çağrı döndüğünde işine döner. Onayladığın uzun bir komut çalışırken el havada görünebilir.
 - **SVG hareketi** (nefes, rozet) yüzeyin SMIL desteğine bağlı; çalışmazsa durağan resim görünür.
 - **Ses** macOS'ta `afplay` ile; Linux ve Windows'ta çalmaz.

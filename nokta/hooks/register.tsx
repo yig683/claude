@@ -269,9 +269,23 @@ async function showMood($: Dollar, mood: NoktaMood, detail?: string): Promise<vo
   await syncStatus($)
 }
 
-async function say($: Dollar, text: string, timeoutMs?: number): Promise<void> {
+/** A toast, unless Nokta was told to be quiet. */
+async function toast($: Dollar, text: string, timeoutMs?: number): Promise<void> {
   if (await read($, quietA)) return
   $.ui.toast(text, timeoutMs === undefined ? undefined : { timeoutMs })
+}
+
+/**
+ * A short message from Nokta: a toast where a screen is attached; a dim line in the transcript where
+ * none is (a cloud session viewed from an app is headless: toasts and the status row have nowhere to go).
+ */
+async function say($: Dollar, mood: NoktaMood, text: string, timeoutMs?: number): Promise<void> {
+  if ((await $.session.surfaces()).length > 0) {
+    await toast($, text, timeoutMs)
+    return
+  }
+  if (await read($, quietA)) return
+  $.ui.log(`${MOOD[mood].face} ${text}`)
 }
 
 async function chime($: Dollar, kind: 'approve' | 'done' | 'error'): Promise<void> {
@@ -340,7 +354,7 @@ async function welcome($: Dollar, surface: RenderSurface | null): Promise<void> 
   const look = await read($, lookA)
   const seen = await $.store.get('seen')
   if (opt.isGreeting) {
-    await say(
+    await toast(
       $,
       seen === true
         ? `${look.name} burada.`
@@ -353,6 +367,29 @@ async function welcome($: Dollar, surface: RenderSurface | null): Promise<void> 
     void $.ui.open({ id: PANE, title: look.name })
   }
 }
+
+/** The state in words: what `/nokta durum` answers, and `/nokta` where no pane can be drawn. */
+async function statusText($: Dollar, look: NoktaLook): Promise<string> {
+  const [mood, detail, jobs] = await Promise.all([read($, moodA), read($, detailA), read($, jobsA)])
+  const m = MOOD[mood]
+  const now = await $.clock.now()
+  const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
+  const lines = [
+    `${m.face} ${look.name} · ${m.label}${detail !== '' && mood !== 'neutral' ? ` · ${detail}` : ''}`,
+    statsLine({ mood, elapsed: run === undefined ? 0 : (now - run.startedAt) / 1000, jobs }),
+  ]
+  if (jobs.length > 0) {
+    lines.push('', 'Son işler:')
+    for (const job of jobs.slice(0, 5)) {
+      const glyph = job.status === 'ok' ? '✓' : job.status === 'err' ? '✗' : job.status === 'run' ? '●' : '■'
+      lines.push(`  ${glyph} ${clip(job.title, 56)} · ${fmtDuration(job.seconds)} · ${job.tools} araç`)
+    }
+  }
+  return lines.join('\n')
+}
+
+const HEADLESS_NOTE =
+  "Bu oturumda Nokta'yı çizecek bir ekran bağlı değil (bulutta çalışan bir oturum): panel, bant ve durum satırı burada görünmez; yalnızca sohbet satırları ve bu komut çalışır. Görmek için Claude Code'u kendi bilgisayarında aç ve şunu yaz:\n/plugin install nokta --marketplace yig683/claude"
 
 /** What the session starts with: the saved look, the preferences, the history, the command. */
 async function begin($: Dollar, isInteractive: boolean): Promise<void> {
@@ -490,7 +527,7 @@ async function endTurn(
   if (reason === 'answer') {
     await showMood($, 'happy', stats)
     if (seconds >= 20 || tools >= 3) {
-      await say($, `${look.name}: tamamladı · ${stats}`)
+      await say($, 'happy', `${look.name}: tamamladı · ${stats}`)
       await chime($, 'done')
     }
     $.clock.after(HAPPY_MS, () => {
@@ -502,7 +539,7 @@ async function endTurn(
     await showMood($, 'neutral', '')
   } else {
     await showMood($, 'worry', reason === 'refusal' ? 'model reddetti' : 'bir hata oluştu')
-    await say($, `${look.name}: bir sorun var`)
+    await say($, 'worry', `${look.name}: bir sorun var`)
     await chime($, 'error')
   }
 }
@@ -541,12 +578,13 @@ async function endCall($: Dollar, id: string, label: string, isSub: boolean, isF
   }
 }
 
-/** The call waits for the person: Nokta raises a hand. */
+/** A permission dialog is about to be shown: Nokta raises a hand. */
 async function raiseHand($: Dollar, tool: string, input: Record<string, unknown>): Promise<void> {
+  if (tool === 'AskUserQuestion') return // that is a question, not an approval: Nokta already asks
   const label = describeTool(tool, input)
   const look = await read($, lookA)
   await showMood($, 'approve', label)
-  await say($, `${look.name}: onayını bekliyor · ${clip(label, 50)}`)
+  await say($, 'approve', `${look.name}: onayını bekliyor · ${clip(label, 50)}`)
   await chime($, 'approve')
 }
 
@@ -561,8 +599,9 @@ export const register: Register = (on, options) => {
   })
 
   on('session.attach', async ($, e, next) => {
+    const attached = await next(e)
     await safe(() => welcome($, e.surface))
-    return next(e)
+    return attached
   })
 
   on('session.end', async ($, e, next) => {
@@ -632,14 +671,12 @@ export const register: Register = (on, options) => {
     }
   }).catch(($, e, next) => next(e))
 
-  // The call waits for the person: Nokta raises a hand. (Nothing tells us when they answer; the
-  // hand comes down when the call returns.)
-  on('tool.check', async ($, e, next) => {
-    const verdict = await next(e)
-    if (verdict.decision === 'ask' && e.tool_use_id !== undefined && e.tool !== 'AskUserQuestion') {
-      await safe(() => raiseHand($, e.tool, isRecord(e.input) ? e.input : {}))
-    }
-    return verdict
+  // A dialog is about to ask the person: Nokta raises a hand. (The engine's verdict "ask" is not the
+  // signal: a mode that approves for itself settles it without anyone being asked. Nothing tells us
+  // when they answer; the hand comes down when the call returns.)
+  on('classic.PermissionRequest', async ($, e, next) => {
+    await safe(() => raiseHand($, e.tool_name, isRecord(e.tool_input) ? e.tool_input : {}))
+    return next(e)
   }).catch(($, e, next) => next(e))
 
   on('prompt.compose', async ($, e, next) => {
@@ -663,6 +700,9 @@ export const register: Register = (on, options) => {
     const arg = rest.join(' ').trim()
 
     if (sub === '' || sub === 'panel' || sub === 'ac') {
+      if ((await $.session.surfaces()).length === 0) {
+        return { text: `${await statusText($, look)}\n\n${HEADLESS_NOTE}` }
+      }
       const why = await openPane($)
       return {
         text:
@@ -676,22 +716,7 @@ export const register: Register = (on, options) => {
       return { text: 'Panel kapandı.' }
     }
     if (sub === 'durum' || sub === 'status') {
-      const [mood, detail, jobs] = await Promise.all([read($, moodA), read($, detailA), read($, jobsA)])
-      const m = MOOD[mood]
-      const now = await $.clock.now()
-      const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
-      const lines = [
-        `${m.face} ${look.name} · ${m.label}${detail !== '' && mood !== 'neutral' ? ` · ${detail}` : ''}`,
-        statsLine({ mood, elapsed: run === undefined ? 0 : (now - run.startedAt) / 1000, jobs }),
-      ]
-      if (jobs.length > 0) {
-        lines.push('', 'Son işler:')
-        for (const job of jobs.slice(0, 5)) {
-          const glyph = job.status === 'ok' ? '✓' : job.status === 'err' ? '✗' : job.status === 'run' ? '●' : '■'
-          lines.push(`  ${glyph} ${clip(job.title, 56)} · ${fmtDuration(job.seconds)} · ${job.tools} araç`)
-        }
-      }
-      return { text: lines.join('\n') }
+      return { text: await statusText($, look) }
     }
     if (sub === 'ad' || sub === 'isim' || sub === 'name') {
       if (arg === '') return { text: `Adım şu an ${look.name}. Değiştirmek için: /nokta ad <yeni ad>` }
