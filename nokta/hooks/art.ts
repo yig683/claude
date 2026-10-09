@@ -2,7 +2,7 @@
 // SVG for the apps, and cut into terminal cells. (Reading the files is the hooks module's job: it alone touches `$`.)
 import type { NoktaColor, NoktaLook, NoktaMood } from '../types'
 import { blendShots, CANVAS, GROUND, propsOf, shadowNode, shotOf, stageNodes, UNIT, type Lod, type Shot, type Sprites } from './motion'
-import { chain, grow, group, move, picture, toSvg, turn, type Node } from './gfx'
+import { chain, circle, grow, group, move, picture, toSvg, turn, type Node } from './gfx'
 import { MOOD } from './model'
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
@@ -90,7 +90,9 @@ export type FramePack = {
   half: number
   /** The silhouette of the resting pose, as fractions of the picture: x0, y0, x1, y1. */
   box: readonly [number, number, number, number]
-  /** `<mood>-<frame>`: base64 WebP (the big picture, the small one) and the 24 x 24 RGBA pixels for terminal cells. */
+  /** A disc wholly inside that silhouette (centre and radius, as fractions of the picture): where the plain face sits. */
+  disc?: readonly [number, number, number]
+  /** `<mood>-<frame>`: base64 WebP (the big picture, the small one) and the 32 x 32 RGBA pixels, cropped to the figure, for terminal cells. */
   frames: Record<string, { h: string; s: string; c: string }>
 }
 
@@ -123,6 +125,16 @@ const GLOW: Record<NoktaColor, string> = {
   peach: '#FFC6A8',
 }
 
+/** The body's own colour, and the colour of its features, for the plain face that sits under the picture. */
+const BODY_HEX: Record<NoktaColor, readonly [string, string]> = {
+  clay: ['#EC7F5E', '#3A1B13'],
+  sky: ['#9DBBD3', '#1B2E49'],
+  sage: ['#A6C0A0', '#1F3925'],
+  kraft: ['#D3B08A', '#3E270F'],
+  ink: ['#4A4743', '#F7F0E5'],
+  peach: ['#F2B9A0', '#44251C'],
+}
+
 /** How much of its natural size each body is drawn at, so a tall cloud or a long-eared rabbit still fits the stage. */
 const FIT: Record<NoktaLook['body'], number> = { nokta: 1, bulut: 0.84, tavsan: 0.78, ucgen: 0.8 }
 
@@ -134,15 +146,46 @@ function shotsAt(at: Moment): { shot: Shot; under?: Shot; k: number } {
   return { shot: blendShots(before, now, at.from.k), under: before, k: Math.max(0, at.from.k) }
 }
 
+/** Where a pack's picture sits on the stage (its top left corner and side) so the feet stand on the ground. */
+function origin(pack: FramePack, fit: number): { x: number; y: number; side: number } {
+  const side = 2 * pack.half * UNIT * fit
+  const ax = (pack.box[0] + pack.box[2]) / 2
+  const ay = pack.box[3]
+  return { x: 120 - ax * side, y: GROUND - ay * side, side }
+}
+
+const moveOf = (shot: Shot) => chain(move(shot.dx, shot.dy), turn(shot.rot, 120, GROUND), grow(shot.sx, shot.sy, 120, GROUND))
+
 /** One picture of the pack, placed so the feet stand on the stage's ground and moved as `shot` says. */
 function placed(pack: FramePack, shot: Shot, frame: string, size: 'h' | 's', opacity: number, fit: number): Node | undefined {
   const f = pack.frames[frame]
   if (f === undefined) return undefined
-  const side = 2 * pack.half * UNIT * fit
-  const ax = (pack.box[0] + pack.box[2]) / 2
-  const ay = pack.box[3]
-  const m = chain(move(shot.dx, shot.dy), turn(shot.rot, 120, GROUND), grow(shot.sx, shot.sy, 120, GROUND))
-  return picture(120 - ax * side, GROUND - ay * side, side, side, `data:image/webp;base64,${f[size]}`, { m, opacity })
+  const { x, y, side } = origin(pack, fit)
+  return picture(x, y, side, side, `data:image/webp;base64,${f[size]}`, { m: moveOf(shot), opacity })
+}
+
+/**
+ * A plain face inside the body, under the picture and hidden by it: where a surface scrubs the picture (a
+ * format it will not draw), Nokta is still a face and not a hole.
+ */
+function plainFace(look: NoktaLook, pack: FramePack, shot: Shot, fit: number): Node {
+  const d = pack.disc
+  const [cx, cy, r] = d !== undefined && d.length === 3 && d.every(Number.isFinite) ? d : [0.5, 0.56, 0.22]
+  const { x, y, side } = origin(pack, fit)
+  const px = x + cx * side
+  const py = y + cy * side
+  const R = r * side
+  const [body, ink] = BODY_HEX[look.color]
+  return group(
+    [
+      circle(px, py, R, body),
+      { shape: { k: 'ellipse', cx: px - 0.42 * R, cy: py - 0.06 * R, rx: 0.1 * R, ry: 0.16 * R }, fill: ink },
+      { shape: { k: 'ellipse', cx: px + 0.42 * R, cy: py - 0.06 * R, rx: 0.1 * R, ry: 0.16 * R }, fill: ink },
+      { shape: { k: 'ellipse', cx: px, cy: py + 0.34 * R, rx: 0.26 * R, ry: 0.1 * R }, fill: ink },
+      { shape: { k: 'ellipse', cx: px, cy: py + 0.26 * R, rx: 0.3 * R, ry: 0.1 * R }, fill: body },
+    ],
+    { m: moveOf(shot) },
+  )
 }
 
 function figureNodes(look: NoktaLook, pack: FramePack, at: Moment, size: 'h' | 's', lod: Lod, isStaged: boolean, span: number, sprites: Sprites | undefined): Node[] {
@@ -156,6 +199,7 @@ function figureNodes(look: NoktaLook, pack: FramePack, at: Moment, size: 'h' | '
   const nodes: Node[] = []
   if (isStaged) nodes.push(...stageNodes(glow, span))
   nodes.push(shadowNode(shot.dy, bodyWidth * 0.42))
+  if (pack.frames[shot.frame] !== undefined) nodes.push(plainFace(look, pack, shot, fit))
   // the old picture stays whole under the new one while that fades in: no moment with a hole in Nokta
   if (under !== undefined) {
     const old = placed(pack, shot, under.frame, size, 1, fit)
@@ -205,7 +249,7 @@ export function heroSvg(look: NoktaLook, pack: FramePack, at: Moment, width: num
   return source.length <= SVG_ROOM ? source : draw('s')
 }
 
-/** Terminal cells (24 columns, 12 rows of half blocks) of one picture of the pack; `undefined` if it has none. */
+/** Terminal cells (half blocks, two pixels to a row) of one picture of the pack; `undefined` if it has none. */
 export function terminalCells(pack: FramePack, frame: string): { cells: string; columns: number; rows: number } | undefined {
   const f = pack.frames[frame]
   if (f === undefined) return undefined

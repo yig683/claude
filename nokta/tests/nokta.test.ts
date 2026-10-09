@@ -330,6 +330,24 @@ describe('the pure parts', () => {
     expect(avatarSvg(DEFAULT_LOOK, pack, { mood: 'neutral', t: 1 }, 30, sprites)).not.toContain('ZZZZ')
   })
 
+  test('a plain face sits under the picture: where a surface will not draw the picture, Nokta is still a face', () => {
+    const pack: FramePack = { ...tinyPack(), disc: [0.5, 0.55, 0.2] }
+    const at = { mood: 'neutral', t: 1 } as const
+    const svg = heroSvg(DEFAULT_LOOK, pack, at, 500, 236)
+    // the face's features are painted first, so the picture covers them
+    expect(svg.indexOf('#3A1B13')).toBeGreaterThan(-1)
+    expect(svg.indexOf('#3A1B13')).toBeLessThan(svg.indexOf('data:image/webp'))
+    // it takes the look's own colours, and sits where the pack says the body has room
+    expect(heroSvg({ ...DEFAULT_LOOK, color: 'ink' }, pack, at, 500, 236)).toContain('#F7F0E5')
+    expect(heroSvg(DEFAULT_LOOK, { ...pack, disc: [0.4, 0.5, 0.1] }, at, 500, 236)).not.toBe(svg)
+    // a pack with no disc, or a broken one, still draws a sound face
+    for (const disc of [undefined, [0.5, 0.5] as unknown as FramePack['disc'], [Number.NaN, 0, 1] as unknown as FramePack['disc']]) {
+      const odd = heroSvg(DEFAULT_LOOK, { ...pack, disc }, at, 500, 236)
+      expect(odd).toContain('#3A1B13')
+      expect(odd).not.toContain('NaN')
+    }
+  })
+
   test('the small 3D things around a mood come from the sprites, as plain pictures (no <use>: a surface may scrub it)', () => {
     const pack = tinyPack()
     const sprites = Object.fromEntries(

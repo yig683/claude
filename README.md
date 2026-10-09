@@ -8,7 +8,7 @@ Yukarıdaki, modun kendi koduyla üretilen karelerin (saniyede 10) oynatılmış
 
 ![Nokta'nın ruh halleri ve görünümleri](docs/karakterler.png)
 
-Soldan sağa, yukarıdan aşağı: hazır · çalışıyor · soru soruyor · onay bekliyor · tamamladı · sorun var · uyuyor · sevildi. Gövdeler: Nokta, Bulut, Tavşan, Üçgen. Nokta'nın beş rengi (kil, gök, adaçayı, kraft, mürekkep) ve üç aksesuarı (gözlük, bere, papyon) var: toplam 23 görünüm.
+Üstteki iki sıra ruh halleri: hazır · çalışıyor · soru soruyor · onay bekliyor · tamamladı · sorun var · uyuyor · sevildi. Sonra dört gövde (Nokta, Bulut, Tavşan, Üçgen), Nokta'nın renkleri (kil yukarıda; gök, adaçayı, kraft, mürekkep) ve aksesuarları (bere, gözlük, papyon). Beş renk × dört seçenek (aksesuarsız, gözlük, bere, papyon) artı üç başka gövde: toplam 23 görünüm; hepsi 25'er resimle canlanır. Resimler modun kendi SVG çıktısının Chromium'daki görüntüsüdür (gerçek uygulama ekranı değil).
 
 ## Kurulum
 
@@ -134,7 +134,7 @@ Kod `nokta/hooks/` altında:
 - `gfx.ts`: SVG üreten küçük sahne ağacı. Saf.
 - `model.ts`: saf mantık (görünüm, ruh halleri, Türkçe kelime katlama, risk notları, kişilik metni).
 - `view.tsx`: panel ve bant ağaçları.
-- `tests/nokta.test.ts`: 67 test.
+- `tests/nokta.test.ts`: 68 test.
 
 Resimler `nokta/assets/` altında: `looks/<gövde>-<renk>-<aksesuar>.json` her görünümün 25 resmini (büyük ve küçük WebP, terminal için 32 × 32 piksel) taşır; `props.json` yüzen küçük şeyleri; `sounds/` üç notayı.
 
@@ -149,8 +149,8 @@ Nokta hiçbir ağ isteği yapmaz. Yazdıkları yalnızca yerel: görünüm ve te
 Dürüst olmak gerekirse:
 
 - **Bulut oturumlarında resim yok.** Bu oturum türünde ekran çizen bir yüzey bağlı değil (yukarıda Kurulum). Nokta'nın resimleri terminalde, masaüstü uygulamasının yerel oturumlarında ve VS Code'da çizilir.
-- **Gerçek masaüstünde hareketi akıcı görüp görmediğimi söyleyemem.** Bu mod bir bulut ortamında yazıldı. Doğrulananlar: `claude plugin validate`, `tsc`, `claude plugin test` ile 67 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor), gerçek motorda `/nokta` komutları, ve SVG kareleri Chromium'da gerçek resimlerle elle görüldü. Akıcılık yüzeyin yeniden çizim hızına bağlı; saniyede 10 kare isteniyor, yüzey daha yavaş çiziyorsa hareket daha az akıcı görünür (`Hareket` kapatılabilir).
-- **Resim biçimi WebP.** Her kare bir SVG içinde `data:image/webp` olarak gider; Chromium (masaüstü uygulaması, VS Code) bunu çizer. Bir yüzey bu adresi temizlerse yüz görünmez.
+- **Gerçek masaüstünde hareketi akıcı görüp görmediğimi söyleyemem.** Bu mod bir bulut ortamında yazıldı. Doğrulananlar: `claude plugin validate`, `tsc`, `claude plugin test` ile 68 test (ağaçlar dört yüzeyin eleman tablosuna karşı motorun kendi doğrulayıcısından geçiyor), gerçek motorda `/nokta` komutları, ve SVG kareleri Chromium'da gerçek resimlerle elle görüldü. Akıcılık yüzeyin yeniden çizim hızına bağlı; saniyede 10 kare isteniyor, yüzey daha yavaş çiziyorsa hareket daha az akıcı görünür (`Hareket` kapatılabilir).
+- **Resim biçimi WebP.** Her kare bir SVG içinde `data:image/webp` olarak gider; Chromium (masaüstü uygulaması, VS Code) bunu çizer. Bir yüzey bu adresi temizlerse resmin altındaki sade vektör yüz (gövdenin rengi, iki göz, bir gülümseme) görünür: 3B karakterin yerine geçer ama ortada boşluk kalmaz.
 - **El ne zaman iner?** Motor "onayladın" diye bir olay vermiyor. Nokta, çağrı döndüğünde işine döner. Onayladığın uzun bir komut çalışırken el havada görünebilir.
 - **Ses** macOS'ta `afplay` ile; Linux ve Windows'ta çalmaz.
 - Renk ve aksesuar yalnızca Nokta gövdesinde; Bulut, Tavşan ve Üçgen'in rengi sabit (her görünümün 25 resmi ayrı render edilir).

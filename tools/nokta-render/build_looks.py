@@ -4,6 +4,7 @@ in : <frames>/<body>-<color>-<accessory>/<mood>-<frame>.png      (RGBA, from bat
 out: <mod>/assets/looks/<look>.json
        { "half": 1.78,                     scene units across half the picture (a body is about 1 unit wide)
          "box": [x0, y0, x1, y1],           the silhouette of neutral-open, as fractions of the picture
+         "disc": [cx, cy, r],               the largest disc wholly inside that silhouette (where a plain face sits)
          "frames": { "<mood>-<frame>": { "h": base64 WebP (hero), "s": base64 WebP (small), "c": base64 RGBA 32x32, cropped to the figure } } }
 
 usage: python build_looks.py <frames dir> <mod dir> [--hero 320] [--small 96] [--cells 32] [--quality 86] [--only substring]
@@ -17,6 +18,7 @@ import sys
 
 import numpy as np
 from PIL import Image, ImageFilter
+from scipy import ndimage
 
 # every picture the mod's director may ask for (motion.ts FRAMES): a look without all of them is not packed
 FRAMES = {
@@ -78,6 +80,15 @@ def union_box(images):
     return (int(round(left)), int(round(top)), int(round(left + side)), int(round(top + side)))
 
 
+def disc_of(im):
+    """Largest disc inside the silhouette: [cx, cy, r] as fractions of the picture, a little smaller than it could be."""
+    solid = np.asarray(im.getchannel('A')).astype(np.float32) / 255.0 > 0.92
+    dist = ndimage.distance_transform_edt(solid)
+    y, x = np.unravel_index(int(np.argmax(dist)), dist.shape)
+    h, w = solid.shape
+    return [round((x + 0.5) / w, 4), round((y + 0.5) / h, 4), round(float(dist[y, x]) * 0.9 / w, 4)]
+
+
 def silhouette(im):
     alpha = np.asarray(im.getchannel('A')).astype(np.float32) / 255.0
     ys, xs = np.where(alpha > 0.5)
@@ -107,13 +118,14 @@ def main():
             print('%s: skipped, %d of %d pictures so far' % (name, len(have & NEEDED), len(NEEDED)))
             continue
         body = name.split('-')[0]
-        pack = {'half': HALF[body], 'box': None, 'frames': {}}
+        pack = {'half': HALF[body], 'box': None, 'disc': None, 'frames': {}}
         images = {os.path.basename(path)[:-4]: Image.open(path).convert('RGBA') for path in files}
         crop = union_box(list(images.values()))
         for key, im in images.items():
             big = im if im.size == (hero, hero) else downscale(im, hero)
             if key == 'neutral-open':
                 pack['box'] = silhouette(big)
+                pack['disc'] = disc_of(big)
             pack['frames'][key] = {
                 'h': webp(big, quality),
                 's': webp(downscale(im, small), quality),

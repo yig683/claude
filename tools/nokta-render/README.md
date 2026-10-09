@@ -24,6 +24,7 @@ pip install bpy==4.5.14 numpy scipy scikit-image pillow
 | `batch_anim.py` | Modun hareket kareleri: her görünüm (gövde × renk × aksesuar, toplam 23) için 25 şeffaf resim, `out/frames/<görünüm>/<ruhhali>-<kare>.png`. Kaldığı yerden devam eder; `--only`, `--shard i/n`, `--reverse`, `--preview` var. |
 | `batch_sprites.py` | Yüzen küçük şeyler (yazı balonu, noktalar, `!`, `?`, `z`, kıvılcım, kalpler, damla, konfeti) aynı ışıkta şeffaf resim olarak. |
 | `build_looks.py` | `batch_anim.py` çıktısını modun dosyalarına çevirir: her görünüm için bir JSON (büyük ve küçük WebP, terminal için figüre kırpılmış 32 × 32 RGBA). Eksik karesi olan görünümü paketlemez. |
+| `contact.py` | Bütün görünümlerin bir karesini tek resimde toplar; render'ı gözle denetlemek için: `python contact.py out/frames out/contact.png neutral-open`. |
 | `build_props.py` | Küçük şeyleri `nokta/assets/props.json` olarak paketler (her biri çizileceği boyutta). |
 | `batch_final.py` | Tasarım panoları için büyük tanıtım görselleri. |
 | `make_sounds.py` | Üç kısa notayı sentezler (`approve`, `done`, `error`); örnek ya da lisans yok. |

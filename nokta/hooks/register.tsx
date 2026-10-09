@@ -148,6 +148,15 @@ async function safe(fn: () => unknown): Promise<void> {
   }
 }
 
+/** What `fn` makes, or nothing if it throws: a picture that cannot be drawn must not take the whole pane with it. */
+async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn()
+  } catch {
+    return undefined
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -669,7 +678,8 @@ async function startTurn($: Dollar, turnId: string, text: string): Promise<void>
   tickMs = (await $.session.surfaces()).includes('terminal') ? 1000 : 4000
   tick?.cancel()
   tick = $.clock.every(tickMs, () => {
-    $.ui.invalidate('ui.render')
+    // the animation clock redraws the pane and the band each frame; this is for when it is not running
+    if (frameTimer === undefined) $.ui.invalidate('ui.render')
   })
 }
 
@@ -1018,8 +1028,8 @@ export const register: Register = (on, options) => {
     const avatar = isCompact
       ? undefined
       : e.surface === 'terminal'
-        ? await terminalAvatar($, U, look, mood)
-        : await heroFor($, U, look, mood, e.props.bodyColumns)
+        ? await attempt(() => terminalAvatar($, U, look, mood))
+        : await attempt(() => heroFor($, U, look, mood, e.props.bodyColumns))
     return paneBody(
       U,
       {
@@ -1057,7 +1067,7 @@ export const register: Register = (on, options) => {
     const now = await $.clock.now()
     const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
     await read($, frameA) // drawn again for each frame of the animation
-    const face = e.surface === 'terminal' ? undefined : await smallAvatar($, U, look, mood, 30, true)
+    const face = e.surface === 'terminal' ? undefined : await attempt(() => smallAvatar($, U, look, mood, 30, true))
     return bandRow(
       U,
       {
@@ -1087,7 +1097,7 @@ export const register: Register = (on, options) => {
     }
     const look = await read($, lookA)
     const U = $.ui.resolve(e)
-    const face = await smallAvatar($, U, look, 'neutral', 26, false)
+    const face = await attempt(() => smallAvatar($, U, look, 'neutral', 26, false))
     if (face === undefined) return next(e)
     const { Box, Text } = U
     return (
