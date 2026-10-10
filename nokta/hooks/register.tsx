@@ -11,7 +11,8 @@ import type { Elements, EngineInterface, PluginOptions, Register, RenderSurface,
 
 import type { NoktaJob, NoktaLook, NoktaMood, NoktaStep, NoktaTodo } from '../types'
 import type { FramePack, Moment } from './art'
-import { avatarSvg, heroSvg, isPack, isSprites, terminalCells } from './art'
+import { avatarSvg, FIT, GLOW, heroSvg, isPack, isSprites, terminalCells } from './art'
+import { isLiveLook } from './hero-frame'
 import {
   ACCESSORIES,
   ACCESSORY_LABEL,
@@ -73,6 +74,8 @@ const bandHiddenA = atom({ plugin: 'nokta', key: 'isBandHidden' } as const, fals
 const quietA = atom({ plugin: 'nokta', key: 'isQuiet' } as const, false)
 const notesA = atom({ plugin: 'nokta', key: 'notes' } as const, [])
 const stillA = atom({ plugin: 'nokta', key: 'isStill' } as const, false)
+/** The live 3D Nokta could not be drawn in the app: the still pictures stand in until the session ends. */
+const heroOffA = atom({ plugin: 'nokta', key: 'isHeroOff' } as const, false)
 /** Bumped by the animation clock: whatever draws Nokta reads it, so it is drawn again for each frame. */
 const frameA = atom({ plugin: 'nokta', key: 'frame' } as const, 0)
 
@@ -86,6 +89,8 @@ type Settings = {
   isMotion: boolean
   isMemory: boolean
   isMessages: boolean
+  /** the desktop app draws the 3D model itself, frame after frame (where it can) */
+  isLive3d: boolean
   sleepMs: number
 }
 
@@ -100,6 +105,7 @@ let opt: Settings = {
   isMotion: true,
   isMemory: true,
   isMessages: true,
+  isLive3d: true,
   sleepMs: 20 * 60_000,
 }
 let lastActiveAt = -1
@@ -118,6 +124,13 @@ let frameEvery = 0
 let terminalTimer: Timer | undefined
 let lastTerminalFrame = ''
 let paneAt = -1e9
+// the live picture: when it last said it works, whether the pane draws it, whether it is being waited for
+let heroOkAt = -1
+let paneLive = false
+let bandLive = false
+let heroDiagKept = ''
+let livePetAt = -1e9
+let heroWatch = false
 const packs = new Map<string, Promise<FramePack | undefined>>()
 let spritesOnce: Promise<Sprites | undefined> | undefined
 const cellCache = new WeakMap<FramePack, Map<string, { cells: string; columns: number; rows: number } | undefined>>()
@@ -135,6 +148,7 @@ function readSettings(options: PluginOptions): Settings {
     isMotion: options['motion'] !== false,
     isMemory: options['memory'] !== false,
     isMessages: options['messages'] !== false,
+    isLive3d: options['live'] !== false,
     sleepMs: Math.max(1, Number(options['sleepMinutes']) || 20) * 60_000,
   }
 }
@@ -319,6 +333,57 @@ async function heroFor($: Dollar, table: unknown, look: NoktaLook, mood: NoktaMo
   return <Svg source={source} alt={`${look.name}: ${MOOD[mood].label}`} width={width} height={height} />
 }
 
+/**
+ * The pane's top picture in the desktop app: a region the app itself draws the 3D model into, frame after frame
+ * (hero.ts), so the pane is not redrawn for each frame and nothing travels between the engine and the app.
+ */
+async function liveHero($: Dollar, table: unknown, look: NoktaLook, mood: NoktaMood, columns: number, isStill: boolean): Promise<JSX.Element | undefined> {
+  const { Client } = table as Elements['desktop']
+  const pack = await loadPack($, look)
+  if (pack === undefined) return undefined
+  const sprites = (await loadSprites($)) ?? {}
+  // (nothing here may be called `h`: that is the name of the JSX factory)
+  const width = Math.max(160, Math.round(columns * 8) - 8)
+  const height = Math.min(240, Math.round(width * 0.95))
+  // what stands in the place until the first live picture is drawn: the rendered picture of the mood
+  const still = (pack.frames[shotOf(mood, STILL_T).frame] ?? pack.frames['neutral-open'])?.h ?? ''
+  return (
+    <Client
+      key="nokta-hero"
+      module="./hero.ts"
+      props={{ mood, isStill, name: look.name, body: look.body, color: look.color, accessory: look.accessory, glow: GLOW[look.color], box: [...pack.box], half: pack.half, fit: FIT[look.body] ?? 1, w: width, h: height, sprites, still }}
+    />
+  )
+}
+
+/** The small Nokta of the band in the desktop app: the same region the pane has, drawn small (hero.ts, `mini`). */
+async function liveMini($: Dollar, table: unknown, look: NoktaLook, mood: NoktaMood, px: number, isStill: boolean): Promise<JSX.Element | undefined> {
+  const { Client } = table as Elements['desktop']
+  const pack = await loadPack($, look)
+  if (pack === undefined) return undefined
+  const sprites = (await loadSprites($)) ?? {}
+  const still = (pack.frames[shotOf(mood, STILL_T).frame] ?? pack.frames['neutral-open'])?.s ?? ''
+  return (
+    <Client
+      key="nokta-mini"
+      module="./hero.ts"
+      props={{ mini: true, mood, isStill, name: look.name, body: look.body, color: look.color, accessory: look.accessory, glow: GLOW[look.color], box: [...pack.box], half: pack.half, fit: FIT[look.body] ?? 1, w: px, h: px, sprites, still }}
+    />
+  )
+}
+
+/** Gives the live picture a few seconds to say it works: one that never starts (an old app, no WebGL) is replaced by the still ones. */
+function watchHero($: Dollar): void {
+  if (heroWatch || heroOkAt >= 0) return
+  heroWatch = true
+  $.clock.after(8000, () => {
+    void safe(async () => {
+      heroWatch = false
+      if (heroOkAt < 0 && !(await read($, heroOffA))) await update($, heroOffA, () => true)
+    })
+  })
+}
+
 /** Starts and stops the animation clocks to match who is looking; called each second and whenever that may have changed. */
 async function conduct($: Dollar): Promise<void> {
   const [surfaces, isStill, mood, isBandHidden, now] = await Promise.all([
@@ -332,8 +397,11 @@ async function conduct($: Dollar): Promise<void> {
   // the pane may be closed or hidden: it counts as looked at only while it keeps being drawn; the band is always there,
   // and moves only for a busy mood (a calm Nokta in the band stands still: the pane is where it lives)
   const isBusy = mood !== 'neutral' && mood !== 'sleep'
-  const isBand = opt.band !== 'kapali' && !isBandHidden && isBusy
-  const wantsApp = isOn && surfaces.some(one => one !== 'terminal') && (now - paneAt < 1500 || isBand)
+  // (a band the app draws by itself needs no frames from here either)
+  const isBand = opt.band !== 'kapali' && !isBandHidden && isBusy && !bandLive
+  // (a pane whose top picture the app draws by itself needs no frames from here)
+  const isPaneDrawn = now - paneAt < 1500 && !paneLive
+  const wantsApp = isOn && surfaces.some(one => one !== 'terminal') && (isPaneDrawn || isBand)
   // a phone gets its pictures over a network: half as many
   const isPhoneOnly = surfaces.includes('mobile') && !surfaces.includes('desktop') && !surfaces.includes('vscode')
   const ms = isPhoneOnly ? Math.max(FRAME_MS[mood], 250) : FRAME_MS[mood]
@@ -675,7 +743,8 @@ async function startTurn($: Dollar, turnId: string, text: string): Promise<void>
     ].slice(0, MAX_JOBS),
   )
   await showMood($, 'work', 'düşünüyor')
-  tickMs = (await $.session.surfaces()).includes('terminal') ? 1000 : 4000
+  // (a pane the app draws by itself is not redrawn for frames, so its time and its steps are kept up by this)
+  tickMs = (await $.session.surfaces()).includes('terminal') || paneLive || bandLive ? 1000 : 4000
   tick?.cancel()
   tick = $.clock.every(tickMs, () => {
     // the animation clock redraws the pane and the band each frame; this is for when it is not running
@@ -999,13 +1068,23 @@ export const register: Register = (on, options) => {
       const isHidden = await toggleBand($)
       return { text: isHidden ? 'Bant ve durum satırı gizlendi.' : 'Bant ve durum satırı açık.' }
     }
+    if (sub === 'tani' || sub === 'diag') {
+      const [isOff, diag] = await Promise.all([read($, heroOffA), $.store.get('heroDiag')])
+      return { text: `Canlı 3B: ${isOff ? 'kapalı (durağan resimler çiziliyor)' : 'açık'}${diag === undefined ? '' : `\n${JSON.stringify(diag)}`}` }
+    }
+    if (sub === 'canli' || sub === 'live') {
+      if (!opt.isLive3d) return { text: 'Canlı 3B ayarlardan kapalı: Nokta ayarlarında "Canlı 3B" açılırsa denenir.' }
+      heroOkAt = -1
+      await update($, heroOffA, () => false)
+      return { text: 'Canlı 3B yeniden denenecek (panel açıksa hemen).' }
+    }
     return { text: HELP }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const U = $.ui.resolve(e)
     const { Text } = U
-    const [look, mood, detail, steps, todos, jobs, isQuiet, isBandHidden, notes, isStill] = await Promise.all([
+    const [look, mood, detail, steps, todos, jobs, isQuiet, isBandHidden, notes, isStill, isHeroOff] = await Promise.all([
       read($, lookA),
       read($, moodA),
       read($, detailA),
@@ -1016,8 +1095,8 @@ export const register: Register = (on, options) => {
       read($, bandHiddenA),
       read($, notesA),
       read($, stillA),
+      read($, heroOffA),
     ])
-    await read($, frameA) // drawn again for each frame of the animation
     const now = await $.clock.now()
     paneAt = now
     const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
@@ -1025,11 +1104,18 @@ export const register: Register = (on, options) => {
     // a short room (an inline pane, a small window) gets a line of text instead of the big picture
     const isCompact = e.surface === 'terminal' ? rows < 28 : rows < 14
     const elapsed = run === undefined ? 0 : Math.max(0, (now - run.startedAt) / 1000)
+    // the desktop app draws the model itself, frame after frame; every other surface is handed pictures for each frame
+    const isLive = e.surface === 'desktop' && opt.isLive3d && !isHeroOff && !isCompact && isLiveLook(look)
+    paneLive = isLive
+    if (!isLive) await read($, frameA) // drawn again for each frame of the animation
     const avatar = isCompact
       ? undefined
       : e.surface === 'terminal'
         ? await attempt(() => terminalAvatar($, U, look, mood))
-        : await attempt(() => heroFor($, U, look, mood, e.props.bodyColumns))
+        : isLive
+          ? await attempt(() => liveHero($, U, look, mood, e.props.bodyColumns, isStill || !opt.isMotion))
+          : await attempt(() => heroFor($, U, look, mood, e.props.bodyColumns))
+    if (isLive && avatar !== undefined) watchHero($)
     return paneBody(
       U,
       {
@@ -1055,6 +1141,35 @@ export const register: Register = (on, options) => {
     )
   })
 
+  // What the live picture in the app says of itself: it works, or it cannot draw (no WebGL, a lost context), and
+  // then the still pictures stand in for it. (What it says is kept, for whoever has to find out why.)
+  on('ui.message', async ($, e, next) => {
+    const data = e.data
+    if (isRecord(data) && data['hero'] === 'ok') {
+      heroOkAt = await $.clock.now()
+      // (what is kept is where it draws, how large and how fast: not each beat's count of frames)
+      const kept = [data['gl'], data['size'], data['every'], data['isBuilding']].join('|')
+      if (kept !== heroDiagKept) {
+        heroDiagKept = kept
+        await safe(() => $.store.set('heroDiag', data))
+      }
+    } else if (isRecord(data) && data['hero'] === 'fault') {
+      await safe(async () => {
+        await $.store.set('heroDiag', data)
+        await update($, heroOffA, () => true)
+      })
+    } else if (isRecord(data) && data['hero'] === 'pet') {
+      // a click on the live picture: the same as the pane's own button (but a pointer held down and dragged is not a hundred pats)
+      await safe(async () => {
+        const now = await $.clock.now()
+        if (now - livePetAt < 1000) return
+        livePetAt = now
+        await pet($, false)
+      })
+    }
+    return next(e)
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (opt.band === 'kapali' || e.props.hasSurvey) return next(e)
     const [mood, isHidden] = await Promise.all([read($, moodA), read($, bandHiddenA)])
@@ -1063,11 +1178,19 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     const U = $.ui.resolve(e)
-    const [look, detail, jobs] = await Promise.all([read($, lookA), read($, detailA), read($, jobsA)])
+    const [look, detail, jobs, isHeroOff, isStill] = await Promise.all([read($, lookA), read($, detailA), read($, jobsA), read($, heroOffA), read($, stillA)])
     const now = await $.clock.now()
     const run = jobs[0]?.status === 'run' ? jobs[0] : undefined
-    await read($, frameA) // drawn again for each frame of the animation
-    const face = e.surface === 'terminal' ? undefined : await attempt(() => smallAvatar($, U, look, mood, 30, true))
+    const isLive = e.surface === 'desktop' && opt.isLive3d && !isHeroOff && isLiveLook(look)
+    bandLive = isLive
+    if (!isLive) await read($, frameA) // drawn again for each frame of the animation
+    // (the small Nokta moves while it is busy and stands still while it is calm, as it always has)
+    const isCalm = mood === 'neutral' || mood === 'sleep'
+    const face =
+      e.surface === 'terminal'
+        ? undefined
+        : await attempt(() => (isLive ? liveMini($, U, look, mood, 30, isStill || !opt.isMotion || isCalm) : smallAvatar($, U, look, mood, 30, true)))
+    if (isLive && face !== undefined) watchHero($)
     return bandRow(
       U,
       {

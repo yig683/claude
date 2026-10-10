@@ -14,20 +14,20 @@ export const UNIT = 64
 // ------------------------------------------------------------------ small maths
 
 const TAU = Math.PI * 2
-const clamp = (x: number, lo = 0, hi = 1): number => Math.min(hi, Math.max(lo, x))
-const ease = (x: number): number => {
+export const clamp = (x: number, lo = 0, hi = 1): number => Math.min(hi, Math.max(lo, x))
+export const ease = (x: number): number => {
   const u = clamp(x)
   return u * u * (3 - 2 * u)
 }
-const sine = (t: number, period: number, phase = 0): number => Math.sin(TAU * (t / period + phase))
-const frac = (x: number): number => x - Math.floor(x)
-const mix = (a: number, b: number, k: number): number => a + (b - a) * k
-const hash = (i: number): number => frac(Math.sin(i * 127.1 + 311.7) * 43758.5453)
+export const sine = (t: number, period: number, phase = 0): number => Math.sin(TAU * (t / period + phase))
+export const frac = (x: number): number => x - Math.floor(x)
+export const mix = (a: number, b: number, k: number): number => a + (b - a) * k
+export const hash = (i: number): number => frac(Math.sin(i * 127.1 + 311.7) * 43758.5453)
 /** 0 -> 1 -> 0 over u in 0..1, a flat-topped arch (so a fast blink still shows closed for a frame). */
-const arch = (u: number): number => (u <= 0 || u >= 1 ? 0 : Math.pow(Math.sin(Math.PI * u), 0.5))
+export const arch = (u: number): number => (u <= 0 || u >= 1 ? 0 : Math.pow(Math.sin(Math.PI * u), 0.5))
 
 /** Keyframes [u, v1, v2, ...] ascending in u; smooth between neighbours. */
-function keys(u: number, frames: readonly (readonly number[])[]): number[] {
+export function keys(u: number, frames: readonly (readonly number[])[]): number[] {
   const x = clamp(u)
   for (let i = 1; i < frames.length; i += 1) {
     const a = frames[i - 1] as readonly number[]
@@ -40,7 +40,7 @@ function keys(u: number, frames: readonly (readonly number[])[]): number[] {
   return (frames[frames.length - 1] as readonly number[]).slice(1)
 }
 
-function blinkAmount(t: number, period: number, seed: number): number {
+export function blinkAmount(t: number, period: number, seed: number): number {
   const i = Math.floor(t / period)
   const local = t - i * period
   const start = period * (0.5 + 0.28 * hash(i + seed))
@@ -51,7 +51,7 @@ function blinkAmount(t: number, period: number, seed: number): number {
 }
 
 /** A glance that moves now and then: steps between random spots, never far from the middle. */
-function wander(t: number, seg: number, ax: number, ay: number, seed: number): [number, number] {
+export function wander(t: number, seg: number, ax: number, ay: number, seed: number): [number, number] {
   const i = Math.floor(t / seg)
   const spot = (k: number): [number, number] =>
     hash(k + seed) > 0.45 ? [(hash(k * 1.7 + seed + 9) - 0.5) * 2 * ax, (hash(k * 2.3 + seed + 4) - 0.5) * 2 * ay] : [0, 0]

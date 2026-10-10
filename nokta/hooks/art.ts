@@ -99,7 +99,12 @@ export type FramePack = {
 /** Whether a parsed file is a set of sprites we can draw from. */
 export function isSprites(value: unknown): value is Sprites {
   if (typeof value !== 'object' || value === null) return false
-  return Object.values(value).every(one => typeof one === 'object' && one !== null && typeof (one as { half?: unknown }).half === 'number' && typeof (one as { w?: unknown }).w === 'string')
+  // (what is in a picture's source goes into an SVG as it is: only base64 may)
+  return Object.values(value).every(one => {
+    if (typeof one !== 'object' || one === null) return false
+    const { half, w } = one as { half?: unknown; w?: unknown }
+    return typeof half === 'number' && Number.isFinite(half) && typeof w === 'string' && /^[A-Za-z0-9+/]*={0,2}$/.test(w)
+  })
 }
 
 /** Whether a parsed file is a pack we can draw from. */
@@ -116,7 +121,7 @@ export type Moment = { mood: NoktaMood; t: number; from?: { mood: NoktaMood; k: 
 export const SVG_ROOM = 120_000
 
 /** A mood's glow: the look's own warm colour, light enough to read on a dark surface. */
-const GLOW: Record<NoktaColor, string> = {
+export const GLOW: Record<NoktaColor, string> = {
   clay: '#EC7F5E',
   sky: '#79B2E8',
   sage: '#9ECC90',
@@ -136,7 +141,7 @@ const BODY_HEX: Record<NoktaColor, readonly [string, string]> = {
 }
 
 /** How much of its natural size each body is drawn at, so a tall cloud or a long-eared rabbit still fits the stage. */
-const FIT: Record<NoktaLook['body'], number> = { nokta: 1, bulut: 0.84, tavsan: 0.78, ucgen: 0.8 }
+export const FIT: Record<NoktaLook['body'], number> = { nokta: 1, bulut: 0.84, tavsan: 0.78, ucgen: 0.8 }
 
 /** The shot a moment asks for, its change of mood folded in. `over` is the new picture fading in over `under`. */
 function shotsAt(at: Moment): { shot: Shot; under?: Shot; k: number } {
@@ -247,6 +252,75 @@ export function heroSvg(look: NoktaLook, pack: FramePack, at: Moment, width: num
   const source = draw('h')
   // a picture past the limit would be refused whole: the small one still shows Nokta
   return source.length <= SVG_ROOM ? source : draw('s')
+}
+
+/**
+ * The pane's top picture with a live Nokta: the stage and the floating things around, and `href` (a picture the
+ * app drew a moment ago from the 3D model, in the camera of the renders) where a rendered pose would stand.
+ * `box` and `half` are the pack's own: the same pose of the model lands where the rendered one did.
+ */
+export function liveHeroSvg(o: {
+  title: string
+  glow: string
+  mood: NoktaMood
+  t: number
+  /** how far Nokta is lifted off the floor (stage units, negative up) */
+  dy: number
+  href: string
+  box: readonly number[]
+  half: number
+  fit: number
+  width: number
+  height: number
+  sprites?: Sprites
+}): string {
+  const scale = o.height / HERO_ROWS
+  const span = o.width / scale
+  const side = 2 * o.half * UNIT * o.fit
+  const ax = ((o.box[0] as number) + (o.box[2] as number)) / 2
+  const ay = o.box[3] as number
+  const bodyWidth = ((o.box[2] as number) - (o.box[0] as number)) * side
+  const nodes: Node[] = [
+    ...stageNodes(o.glow, span),
+    shadowNode(o.dy, bodyWidth * 0.42),
+    picture(120 - ax * side, GROUND - ay * side, side, side, o.href),
+    ...propsOf(o.mood, o.t, 1, 'full', o.dy, o.sprites),
+  ]
+  return toSvg(group(nodes), {
+    viewBox: [(CANVAS - span) / 2, HERO_TOP, span, HERO_ROWS],
+    width: o.width,
+    height: o.height,
+    prefix: 'h',
+    title: o.title,
+  })
+}
+
+/**
+ * Nokta small (the band's) with a live picture: its shadow, `href` (what the app drew a moment ago from the 3D model)
+ * where a rendered pose would stand, and the small things around it, in the frame `avatarSvg` uses.
+ */
+export function liveFaceSvg(o: {
+  title: string
+  mood: NoktaMood
+  t: number
+  dy: number
+  href: string
+  box: readonly number[]
+  half: number
+  fit: number
+  size: number
+  sprites?: Sprites
+}): string {
+  const side = 2 * o.half * UNIT * o.fit
+  const ax = ((o.box[0] as number) + (o.box[2] as number)) / 2
+  const ay = o.box[3] as number
+  const bodyWidth = ((o.box[2] as number) - (o.box[0] as number)) * side
+  const nodes: Node[] = [
+    shadowNode(o.dy, bodyWidth * 0.42),
+    picture(120 - ax * side, GROUND - ay * side, side, side, o.href),
+    ...propsOf(o.mood, o.t, 1, 'small', o.dy, o.sprites),
+  ]
+  return toSvg(group(nodes), { viewBox: [28, 12, 196, 196], width: o.size, height: o.size, prefix: 'a', title: o.title })
 }
 
 /** Terminal cells (half blocks, two pixels to a row) of one picture of the pack; `undefined` if it has none. */

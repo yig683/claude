@@ -263,6 +263,8 @@ export const HELP = [
   '/nokta hareket    hareketi aç/kapat (kapalıyken Nokta durağan çizilir)',
   '/nokta sessiz     bildirim ve sesleri aç/kapat',
   '/nokta bant       durum bandını göster/gizle',
+  '/nokta tani       canlı 3B\'nin durumu; çizemiyorsa nedeni',
+  '/nokta canli      canlı 3B\'yi yeniden dene',
   '/nokta yardım     bu liste',
   '',
   'Adıyla da seslenebilirsin: "Nokta" ya da "Nokta, şunu yap".',

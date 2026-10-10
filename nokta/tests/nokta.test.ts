@@ -137,7 +137,9 @@ function engine(on: On, options: EngineOptions = {}): Seen {
     return { value: undefined }
   })
   on('fs.read', (_$, e) => {
-    const hit = Object.entries(options.files ?? {}).find(([end]) => e.path.endsWith(end))
+    // (on Windows the engine hands the path over with backslashes)
+    const path = e.path.split('\\').join('/')
+    const hit = Object.entries(options.files ?? {}).find(([end]) => path.endsWith(end))
     if (hit === undefined) throw new Error(`ENOENT: ${e.path}`)
     return { value: hit[1] }
   })
@@ -468,8 +470,11 @@ describe('on every surface', () => {
     expect(cells).toContain('"columns":2')
     expect(cells).toContain('"rows":1')
     await terminal.unmount()
+    // (the desktop app draws the model itself; where it cannot, as here, it is handed the still picture: see below)
     for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
       const ui = await $.ui.mount({ plugin: 'nokta', surface, component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+      // (the desktop holds the live module, which finds no canvas here on its first beat)
+      await ui.advance(100).catch(() => undefined)
       const svg = JSON.stringify(await ui.drawn())
       expect(svg).toContain('data:image/webp;base64,HHHH')
       // a still SVG: an "interactive" one is drawn in a frame that refuses pictures
@@ -482,6 +487,7 @@ describe('on every surface', () => {
     engine(on, { files: LOOKS_FILE, entries: { look: { name: 'Nokta', body: 'nokta', color: 'sky', accessory: 'beret' } } })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    await ui.advance(100)
     expect(JSON.stringify(await ui.drawn())).toContain('data:image/webp;base64,HHHH')
     await ui.unmount()
   })
@@ -995,10 +1001,10 @@ describe('an agent, not just a face', () => {
 describe('the animation clock', () => {
   const frames = (seen: Seen): number => Number(seen['frame'] ?? 0)
 
-  test('it runs while the pane is drawn, and stops soon after it stops being drawn', async ($, on) => {
-    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE })
-    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
-    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+  test('where pictures are handed over it runs while the pane is drawn, and stops soon after it stops being drawn', async ($, on) => {
+    const seen = engine(on, { surfaces: ['vscode'], files: LOOKS_FILE })
+    await $.session.start({ cwd: '/work', surface: 'vscode', isInteractive: true })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'vscode', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
     await clock?.advance(2000)
     const running = frames(seen)
     expect(running).toBeGreaterThan(5)
@@ -1011,16 +1017,16 @@ describe('the animation clock', () => {
     await clock?.advance(5000)
     expect(frames(seen)).toBe(stopped)
     // and the pane coming back wakes it
-    const again = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    const again = await $.ui.mount({ plugin: 'nokta', surface: 'vscode', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
     await clock?.advance(2500)
     expect(frames(seen)).toBeGreaterThan(stopped)
     await again.unmount()
   })
 
   test('a still Nokta stays still, and the choice is kept', async ($, on) => {
-    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE_ALL })
+    const seen = engine(on, { surfaces: ['vscode'], files: LOOKS_FILE_ALL })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
-    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'vscode', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
     await ui.press({ key: 'motion' })
     expect(seen['isStill']).toBe(true)
     await clock?.advance(2000)
@@ -1031,9 +1037,9 @@ describe('the animation clock', () => {
   })
 
   test('the setting turns motion off for good', { options: { motion: false } }, async ($, on) => {
-    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE })
+    const seen = engine(on, { surfaces: ['vscode'], files: LOOKS_FILE })
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
-    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
+    const ui = await $.ui.mount({ plugin: 'nokta', surface: 'vscode', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT })
     await clock?.advance(6000)
     expect(frames(seen)).toBe(0)
     await ui.unmount()
@@ -1044,12 +1050,142 @@ describe('the animation clock', () => {
     await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
     const props = { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 5 }, view: {} } as const
     const band = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'AbovePrompt', props, viewport: VIEWPORT })
+    // (the app draws the small Nokta itself; in the test kit that module has no canvas and says so on its first beat,
+    // and from then on the band is handed the pictures one by one)
+    await band.advance(100)
     await clock?.advance(5000)
     expect(frames(seen)).toBe(0) // calm: nothing to animate in the band
     await $.turn.start({ text: 'çalış', turnId: 't1' })
     await clock?.advance(3000)
     expect(frames(seen)).toBeGreaterThan(10)
     await band.unmount()
+  })
+
+  test('the band the app draws itself needs no frames from the engine', async ($, on) => {
+    const seen = engine(on, { surfaces: ['desktop'], files: LOOKS_FILE })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    const props = { hasSurvey: false, isWorking: true, maxRows: 6, bodyColumns: 80, scroll: { offset: 0, bodyRows: 5 }, view: {} } as const
+    const band = await $.ui.mount({ plugin: 'nokta', surface: 'desktop', component: 'AbovePrompt', props, viewport: VIEWPORT })
+    expect(await band.find({ key: 'nokta-mini' })).toBeDefined()
+    await $.turn.start({ text: 'çalış', turnId: 't1' })
+    await clock?.advance(3000)
+    expect(frames(seen)).toBe(0)
+    await band.unmount()
+  })
+})
+
+describe('the live model in the desktop app', () => {
+  // (The test kit runs a surface module with no browser around it: no document, so no canvas. The module's own work is
+  // tested in hero.test.ts with a stand-in; here is what the hooks do with a module that mounts, is pointed at, and says it cannot draw.)
+  const run = (args: string) =>
+    ({ command: 'nokta', args, origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 100 } }) as const
+  const desktopPane = { plugin: 'nokta', surface: 'desktop', component: 'Pane', requestId: 'nokta', props: PANE, viewport: VIEWPORT } as const
+  const started = async ($: Parameters<Parameters<typeof test>[1]>[0], on: On, options: EngineOptions = {}) => {
+    const seen = engine(on, { files: LOOKS_FILE, ...options })
+    await $.session.start({ cwd: '/work', surface: 'desktop', isInteractive: true })
+    return seen
+  }
+
+  test('the pane hands the model to a surface module instead of a picture', async ($, on) => {
+    await started($, on)
+    const ui = await $.ui.mount(desktopPane)
+    expect(await ui.find({ key: 'nokta-hero' })).toBeDefined()
+    // the still pictures are held back while the live one may draw
+    expect(JSON.stringify(await ui.drawn()).includes('data:image/webp;base64,HHHH')).toBe(false)
+    await ui.unmount()
+  })
+
+  for (const look of [
+    { name: 'Nokta', body: 'nokta', color: 'ink', accessory: 'glasses' },
+    { name: 'Bulut', body: 'bulut', color: 'sky', accessory: 'none' },
+    { name: 'Tavşan', body: 'tavsan', color: 'peach', accessory: 'none' },
+    { name: 'Üçgen', body: 'ucgen', color: 'ink', accessory: 'none' },
+  ] as const) {
+    test(`the ${look.body} in ${look.color} with ${look.accessory} is drawn live`, async ($, on) => {
+      const name = `${look.body}-${look.color}-${look.accessory}`
+      await started($, on, { entries: { look }, files: { ...LOOKS_FILE, [`assets/looks/${name}.json`]: TINY_LOOK } })
+      const ui = await $.ui.mount(desktopPane)
+      expect(await ui.find({ key: 'nokta-hero' })).toBeDefined()
+      await ui.unmount()
+    })
+  }
+
+  test('a press on the live picture pats Nokta', async ($, on) => {
+    const seen = await started($, on)
+    const ui = await $.ui.mount(desktopPane)
+    expect(mood(seen)).not.toBe('love')
+    await ui.pointer({ type: 'down', x: 3, y: 2, button: 'left', in: 'nokta-hero' })
+    expect(mood(seen)).toBe('love')
+    await ui.unmount()
+  })
+
+  test('a pointer pressed over and over is one pat a second, not a storm of them', async ($, on) => {
+    const said: string[] = []
+    const seen = await started($, on, { onToast: text => said.push(text), onLog: text => said.push(text) })
+    const ui = await $.ui.mount(desktopPane)
+    const press = () => ui.pointer({ type: 'down', x: 3, y: 2, button: 'left', in: 'nokta-hero' })
+    const pats = () => said.filter(text => text.includes('Nokta: ')).length
+    await press()
+    await press()
+    await press()
+    expect(mood(seen)).toBe('love')
+    // (three presses at once make one pat)
+    expect(pats()).toBe(1)
+    await clock?.advance(1500)
+    await press()
+    expect(pats()).toBe(2)
+    await ui.unmount()
+  })
+
+  test('a module that cannot draw sends the pane back to the still pictures, and says why', async ($, on) => {
+    const seen = await started($, on)
+    const ui = await $.ui.mount(desktopPane)
+    expect(seen['isHeroOff']).not.toBe(true)
+    // the first beat of its clock: it finds it has no canvas
+    await ui.advance(100)
+    expect(seen['isHeroOff']).toBe(true)
+    expect(await ui.find({ key: 'nokta-hero' })).toBeUndefined()
+    expect(JSON.stringify(await ui.drawn()).includes('data:image/webp;base64,HHHH')).toBe(true)
+    const why = (await $.command.run(run('tani'))).text
+    expect(why).toContain('kapalı')
+    expect(why).toContain('no document')
+    // once the machine can draw, the person asks for it again
+    expect((await $.command.run(run('canli'))).text).toContain('yeniden')
+    expect(seen['isHeroOff']).toBe(false)
+    expect(await ui.find({ key: 'nokta-hero' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a live picture that is never heard from is given up on', async ($, on) => {
+    const seen = await started($, on)
+    const ui = await $.ui.mount(desktopPane)
+    // (its clock never beats here, so it says nothing at all)
+    await clock?.advance(5000)
+    expect(seen['isHeroOff']).not.toBe(true)
+    await clock?.advance(5000)
+    expect(seen['isHeroOff']).toBe(true)
+    expect(JSON.stringify(await ui.drawn()).includes('data:image/webp;base64,HHHH')).toBe(true)
+    await ui.unmount()
+  })
+
+  test('the setting turns the live model off for good: the pictures, and the command says so', { options: { live: false } }, async ($, on) => {
+    const seen = await started($, on)
+    const ui = await $.ui.mount(desktopPane)
+    expect(await ui.find({ key: 'nokta-hero' })).toBeUndefined()
+    expect(JSON.stringify(await ui.drawn()).includes('data:image/webp;base64,HHHH')).toBe(true)
+    expect((await $.command.run(run('canli'))).text).toContain('ayarlardan kapalı')
+    expect(seen['isHeroOff']).not.toBe(false)
+    await ui.unmount()
+  })
+
+  test('the other surfaces are handed pictures, not a surface module', async ($, on) => {
+    const seen = engine(on, { surfaces: ['vscode'], files: LOOKS_FILE })
+    await $.session.start({ cwd: '/work', surface: 'vscode', isInteractive: true })
+    const ui = await $.ui.mount({ ...desktopPane, surface: 'vscode' })
+    expect(await ui.find({ key: 'nokta-hero' })).toBeUndefined()
+    expect(JSON.stringify(await ui.drawn()).includes('data:image/webp;base64,HHHH')).toBe(true)
+    expect(seen['isHeroOff']).not.toBe(true)
+    await ui.unmount()
   })
 })
 

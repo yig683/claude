@@ -1,7 +1,7 @@
 {
   "name": "nokta",
-  "version": "2.0.0",
-  "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan 3B karakter. Nefes alır, göz kırpar, çalışırken kaş çatar, onay beklerken el sallar, iş bitince zıplar; adıyla seslenince karşılık verir, hatırlar; paneli, bandı, durum satırı ve Türkçe kişiliğiyle.",
+  "version": "2.1.0",
+  "description": "Nokta: Claude Code'un içinde yaşayan, yüzü olan 3B karakter. Masaüstü uygulamasında gerçek zamanlı çizilir: nefes alır, göz kırpar, çalışırken kaş çatar, onay beklerken el sallar, iş bitince zıplar; adıyla seslenince karşılık verir, hatırlar; paneli, bandı, durum satırı ve Türkçe kişiliğiyle.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "persona": {
@@ -53,6 +53,12 @@
       "type": "boolean",
       "title": "Hareket",
       "description": "Nokta hareket etsin: nefes alsın, göz kırpsın, el sallasın, zıplasın (panel ve çalışırken bant). Kapalıysa durağan çizilir; pil ya da işlemciyi korumak için /nokta hareket ile de kapatılır.",
+      "default": true
+    },
+    "live": {
+      "type": "boolean",
+      "title": "Canlı 3B",
+      "description": "Masaüstü uygulamasında Nokta, panelde ve bantta 3B modelden gerçek zamanlı çizilir: kareler ekran kartında üretilir, takılmadan akar. Ekran kartı yoksa ya da çizemezse otomatik olarak hazır resimler gösterilir; /nokta tani nedenini söyler, /nokta canli yeniden dener.",
       "default": true
     },
     "memory": {

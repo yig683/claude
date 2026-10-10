@@ -1,0 +1,147 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>smoke</title>
+<body style="margin:0;background:#2a2a2a;color:#ddd;font:12px monospace">
+<pre id="out" style="padding:6px;margin:0;white-space:pre-wrap"></pre>
+<script type="module">
+// The surface module of the mod (nokta/hooks/hero.ts), served as the mod holds it and run in a real browser: what the
+// app would draw, shown the way the app shows it (an <img> of the SVG), next to the picture the old way made of the renders.
+// The page is driven from the console:
+//   await SMOKE.gallery([['nokta-clay-none', 'happy'], ['tavsan-peach-none', 'approve']], 'gallery.png', { cols: 1 })   (label: (look, mood) => text)
+//   await SMOKE.miniGallery([['nokta-clay-none', 'work']], 'mini.png')      the small Nokta of the band
+import Hero from '/mod/hooks/hero.ts'
+import { avatarSvg, heroSvg } from '/mod/hooks/art.ts'
+
+const out = text => {
+  document.getElementById('out').textContent += `${text}\n`
+}
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+const packs = {}
+const getPack = async look => (packs[look] ??= await (await fetch(`/nokta/assets/looks/${look}.json`)).json())
+const sprites = await (await fetch('/nokta/assets/props.json')).json()
+const GLOW = { clay: '#EC7F5E', sky: '#79B2E8', sage: '#9ECC90', kraft: '#E2B97E', ink: '#8E97C0', peach: '#FFC6A8' }
+const FIT = { nokta: 1, bulut: 0.84, tavsan: 0.78, ucgen: 0.8 }
+const lookOf = look => {
+  const [body, color, accessory] = look.split('-')
+  return { name: 'Nokta', body, color, accessory }
+}
+
+/** A surface as the app gives it to a module: elements, state, region, clock, pointer, a way to post to the hooks. */
+function makeSurface(columns = 62, rows = 15) {
+  const posts = []
+  const timers = []
+  let state
+  let pointer
+  const surface = {
+    elements: { Box: props => ({ type: 'Box', props }), Text: props => ({ type: 'Text', props }) },
+    get state() {
+      return state
+    },
+    setState(next) {
+      state = next
+    },
+    columns,
+    rows,
+    every(ms, fn) {
+      const timer = { ms, fn, live: true }
+      timers.push(timer)
+      return () => {
+        timer.live = false
+      }
+    },
+    onPointer(fn) {
+      pointer = fn
+      return () => {
+        pointer = undefined
+      }
+    },
+    onKey: () => () => {},
+    post: data => posts.push(data),
+  }
+  return { surface, posts, timers, point: event => pointer?.(event), beat: () => timers.filter(t => t.live).forEach(t => t.fn()) }
+}
+
+/** Mounts the module for a look and a mood and lets its clock beat for `ms`; what it last drew comes back. */
+async function run(look, mood, { ms = 1500, mini = false, still = false, w = 500, h = 222 } = {}) {
+  const pack = await getPack(look)
+  const { body, color, accessory } = lookOf(look)
+  const s = makeSurface()
+  const props = { mood, isStill: still, name: 'Nokta', body, color, accessory, glow: GLOW[color], box: pack.box, half: pack.half, fit: FIT[body], w: mini ? 30 : w, h: mini ? 30 : h, sprites, ...(mini ? { mini: true } : {}) }
+  Hero(props, s.surface)
+  const t0 = performance.now()
+  let beats = 0
+  // (it goes on until a live picture is drawn: the first build of a program on a machine takes seconds)
+  while (performance.now() - t0 < ms || (s.surface.state?.frames === 0 && performance.now() - t0 < 60000)) {
+    s.beat()
+    beats += 1
+    await sleep(s.timers.find(t => t.live)?.ms ?? 40)
+  }
+  return { el: Hero(props, s.surface), posts: s.posts, beats, state: s.surface.state }
+}
+
+function toImg(source, w, h) {
+  const img = new Image()
+  img.width = w
+  img.height = h
+  return new Promise((resolve, reject) => {
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`
+  })
+}
+
+const save = async (name, canvas) => (await fetch(`/save?name=${name}`, { method: 'POST', body: canvas.toDataURL('image/png') })).text()
+
+/** Pairs: the picture made of the renders, then what the module draws. */
+async function gallery(cases, name, { w = 500, h = 222, cols = 2, ms = 1200, label } = {}) {
+  const canvas = document.createElement('canvas')
+  canvas.width = cols * (2 * w + 12)
+  canvas.height = Math.ceil(cases.length / cols) * (h + 18)
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#2a2a2a'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  const report = []
+  for (const [i, [look, mood]] of cases.entries()) {
+    const baked = heroSvg(lookOf(look), await getPack(look), { mood, t: 0.4 }, w, h, sprites)
+    const live = await run(look, mood, { ms, w, h })
+    const ox = (i % cols) * (2 * w + 12)
+    const oy = Math.floor(i / cols) * (h + 18)
+    const fault = live.posts.find(p => p.hero === 'fault')?.why
+    ctx.fillStyle = '#ddd'
+    ctx.font = '11px monospace'
+    ctx.fillText(label ? label(look, mood) : `${look} / ${mood}  beats ${live.beats}  ${fault ?? ''}`, ox + 2, oy + 12)
+    ctx.drawImage(await toImg(baked, w, h), ox, oy + 16)
+    if (live.el.type === 'Svg') ctx.drawImage(await toImg(live.el.props.source, w, h), ox + w + 6, oy + 16)
+    report.push({ look, mood, type: live.el.type, chars: live.el.props?.source?.length, fault, gl: live.state?.rig?.info, size: live.state?.size, ms: +(live.state?.cost ?? 0).toFixed(1) })
+  }
+  return { saved: await save(name, canvas), report }
+}
+
+/** The small Nokta of the band, the old picture then the live one, each enlarged four times. */
+async function miniGallery(cases, name) {
+  const S = 30
+  const Z = 4
+  const canvas = document.createElement('canvas')
+  canvas.width = cases.length * (2 * S * Z + 12)
+  canvas.height = S * Z + 20
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#2a2a2a'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  const report = []
+  for (const [i, [look, mood]] of cases.entries()) {
+    const baked = avatarSvg(lookOf(look), await getPack(look), { mood, t: 0.4 }, S, sprites)
+    const live = await run(look, mood, { ms: 1000, mini: true })
+    const ox = i * (2 * S * Z + 12)
+    ctx.fillStyle = '#ddd'
+    ctx.font = '10px monospace'
+    ctx.fillText(`${look.replace('-none', '')} ${mood}`, ox + 2, 12)
+    ctx.drawImage(await toImg(baked, S * Z, S * Z), ox, 16, S * Z, S * Z)
+    if (live.el.type === 'Svg') ctx.drawImage(await toImg(live.el.props.source, S * Z, S * Z), ox + S * Z + 6, 16, S * Z, S * Z)
+    report.push({ look, mood, type: live.el.type, chars: live.el.props?.source?.length, size: live.state?.size })
+  }
+  return { saved: await save(name, canvas), report }
+}
+
+window.SMOKE = { run, gallery, miniGallery, makeSurface, toImg, Hero }
+out('ready')
+</script>

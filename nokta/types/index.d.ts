@@ -45,6 +45,8 @@ declare module 'claude-code' {
       isQuiet: boolean
       /** Motion is switched off: Nokta stands still. */
       isStill: boolean
+      /** The live 3D Nokta could not be drawn in the app (no WebGL, a lost context): the still pictures stand in. */
+      isHeroOff: boolean
       /** A counter the animation clock bumps, so the pane and the band redraw a frame. */
       frame: number
     }

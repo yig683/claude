@@ -1,0 +1,361 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>compare</title>
+<body style="margin:0;background:#2a2a2a;color:#ddd;font:12px monospace">
+<div style="display:flex;gap:6px;padding:6px;align-items:flex-start;flex-wrap:wrap">
+  <div><div>render</div><canvas id="refc" width="320" height="320" style="background:#777"></canvas></div>
+  <div><div>live model</div><canvas id="gl" width="320" height="320" style="background:#777"></canvas></div>
+  <div><div>difference x4</div><canvas id="diff" width="320" height="320"></canvas></div>
+</div>
+<div style="display:flex;gap:6px;padding:6px">
+  <div><div>render, zoomed</div><canvas id="zr" width="480" height="300"></canvas></div>
+  <div><div>live model, zoomed</div><canvas id="zg" width="480" height="300"></canvas></div>
+</div>
+<pre id="out" style="padding:6px;white-space:pre-wrap;margin:0"></pre>
+<script src="/tools/nokta-live/out/hero_gl.js"></script>
+<script>
+// Compares the live model (nokta/hooks/hero-shader.ts) with the Blender renders of the looks, and fits the numbers of the
+// light and the material to them. A tool for whoever tunes the model: not part of the mod. See README.md.
+//
+// The page is driven from the console (or by a script through the browser):
+//   await NK.sheet('nokta-sky-none', 'sheet.png', ['neutral-open', 'happy-a'])   renders and live pictures side by side, saved to ./out
+//   await NK.fit({ looks: ['nokta-sky-none'], names: ['ambient', 'key'], keys: [...], iters: 20 })
+//   await NK.dump('fits.json')                                                    every look's numbers, for apply-fits.mjs
+const N = 320
+const K = window.NKGL
+const out = text => { document.getElementById('out').textContent += `${text}\n` }
+
+// ------------------------------------------------------------------ the live model
+
+const glc = document.getElementById('gl')
+const gl = glc.getContext('webgl2', { alpha: true, premultipliedAlpha: false, antialias: false, preserveDrawingBuffer: true })
+const compile = (type, source) => {
+  const shader = gl.createShader(type)
+  gl.shaderSource(shader, source)
+  gl.compileShader(shader)
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(`shader: ${gl.getShaderInfoLog(shader)}`)
+  return shader
+}
+const prog = gl.createProgram()
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, K.VERT))
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, K.FRAG))
+gl.linkProgram(prog)
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(`link: ${gl.getProgramInfoLog(prog)}`)
+gl.useProgram(prog)
+gl.viewport(0, 0, N, N)
+gl.clearColor(0, 0, 0, 0)
+const uRes = gl.getUniformLocation(prog, 'uRes')
+gl.uniform1i(gl.getUniformLocation(prog, 'uSamples'), 4)
+const uU = gl.getUniformLocation(prog, 'uU')
+const uP = gl.getUniformLocation(prog, 'uP')
+
+/** The numbers of a look's palette as fitted so far (changed in place by `fit`). */
+const own = {}
+const pOf = look => (own[look] ??= Float32Array.from(K.looks[look].p))
+
+function draw(look, key) {
+  gl.clear(gl.COLOR_BUFFER_BIT)
+  gl.uniform2f(uRes, N, N)
+  gl.uniform4fv(uU, new Float32Array(K.looks[look].frames[key]))
+  gl.uniform1fv(uP, pOf(look))
+  gl.drawArrays(gl.TRIANGLES, 0, 3)
+}
+
+function readGL() {
+  const px = new Uint8Array(N * N * 4)
+  gl.readPixels(0, 0, N, N, gl.RGBA, gl.UNSIGNED_BYTE, px)
+  const flipped = new Uint8Array(N * N * 4)
+  for (let y = 0; y < N; y += 1) flipped.set(px.subarray((N - 1 - y) * N * 4, (N - y) * N * 4), y * N * 4)
+  return flipped
+}
+
+// ------------------------------------------------------------------ the renders
+
+const refs = {}
+
+async function loadRefs(look, keys) {
+  const pack = await (await fetch(`/nokta/assets/looks/${look}.json`)).json()
+  for (const key of keys) {
+    if (refs[`${look}/${key}`]) continue
+    const img = new Image()
+    await new Promise((resolve, reject) => {
+      img.onload = resolve
+      img.onerror = reject
+      img.src = `data:image/webp;base64,${pack.frames[key].h}`
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = N
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(img, 0, 0, N, N)
+    refs[`${look}/${key}`] = ctx.getImageData(0, 0, N, N).data
+  }
+}
+
+// ------------------------------------------------------------------ what is compared
+
+const over = (c, a, bg) => (a / 255) * c + (1 - a / 255) * bg
+
+/**
+ * Which pixels count: 'body' leaves the face box out (the light is judged on the body: eyes, brows and what is worn are
+ * judged by eye, and fitted on their own), 'face' counts only that box, 'all' everything.
+ */
+let maskMode = 'body'
+const masks = {}
+function maskFor(look) {
+  const cached = masks[`${look}/${maskMode}`]
+  if (cached) return cached
+  const mask = new Uint8Array(N * N)
+  const { view, layout } = K.looks[look]
+  const x0 = -(layout.ex + 0.34)
+  const x1 = layout.ex + 0.34
+  const z0 = layout.my - 0.16
+  const z1 = layout.brow + 0.14
+  const px = x => ((x - view[0]) / (2 * view[2])) * N + N / 2
+  const py = z => N / 2 - ((z - view[1]) / (2 * view[2])) * N
+  for (let y = 0; y < N; y += 1) {
+    for (let x = 0; x < N; x += 1) {
+      const inside = x >= px(x0) && x <= px(x1) && y >= py(z1) && y <= py(z0)
+      mask[y * N + x] = maskMode === 'body' ? (inside ? 1 : 0) : maskMode === 'face' ? (inside ? 0 : 1) : 0
+    }
+  }
+  masks[`${look}/${maskMode}`] = mask
+  return mask
+}
+function setMaskMode(mode) {
+  maskMode = mode
+}
+
+/** The distance between a render and a live picture: RMS of the difference in sRGB, on the background they will be seen on. */
+function loss(img, ref, mask) {
+  let sum = 0
+  let n = 0
+  for (let i = 0; i < N * N; i += 1) {
+    const a1 = ref[i * 4 + 3]
+    const a2 = img[i * 4 + 3]
+    if (a1 < 128 && a2 < 128) continue
+    if (mask?.[i]) continue
+    for (let c = 0; c < 3; c += 1) {
+      const d = over(ref[i * 4 + c], a1, 120) - over(img[i * 4 + c], a2, 120)
+      sum += d * d
+    }
+    n += 3
+  }
+  return Math.sqrt(sum / Math.max(n, 1))
+}
+
+/** The mean loss over the looks and frames. */
+function objective(looks, keys) {
+  let sum = 0
+  for (const look of looks) {
+    const mask = maskFor(look)
+    for (const key of keys) {
+      draw(look, key)
+      sum += loss(readGL(), refs[`${look}/${key}`], mask)
+    }
+  }
+  return sum / (looks.length * keys.length)
+}
+
+// ------------------------------------------------------------------ fitting
+
+/** How far each number may go. */
+const BOUNDS = {
+  ambient: [0.2, 2.5], ambR: [0.3, 1.8], ambG: [0.3, 1.8], ambB: [0.3, 1.8], key: [0.1, 1.8], keyWrap: [0, 1], fill: [0, 1.5], fillWrap: [0, 1],
+  rimL: [0, 8], rimR: [0, 8], rimWrap: [-0.1, 0.8], top: [0, 2], bounce: [0, 0.6], spec: [0, 1.2], specExp: [8, 400], coat: [0, 2], coatExp: [20, 500],
+  sss: [0, 1], sssR: [0, 1.5], sssG: [0, 1.5], sssB: [0, 1.5], sheen: [0, 2], sheenPow: [1, 6], ao: [0, 5], exposure: [-0.6, 0.9], gain: [0.6, 2],
+  eyeLight: [0, 2], eyeSpec: [0, 2], browThick: [0.5, 1.8], rimSpec: [0, 1], rimSpecExp: [4, 250], glow: [0.2, 4],
+  env: [0, 3], envF: [0, 30], envBlur: [0.005, 0.6], envMetal: [0, 3], lens: [0, 2], world: [0, 0.4], glint: [0.6, 2.5], lineMatte: [0, 1], eyeEnv: [0, 3], eyeBlur: [0.003, 0.2],
+}
+
+/**
+ * Fits the named numbers by coordinate descent: each is moved a step up and down, the step grows while it pays and
+ * shrinks when it does not. The numbers named are one value for all the looks given (two bodies in one colour, or
+ * the eyes in every colour); what is not named stays each look's own. Run as a job: `window.job` says how far it is.
+ */
+async function fit({ looks, names, keys, iters = 20, bounds = {}, tag = '' }) {
+  const limits = { ...BOUNDS, ...bounds }
+  for (const look of looks) await loadRefs(look, keys)
+  const Ps = looks.map(pOf)
+  for (const name of names) for (const p of Ps) p[K.P[name]] = Ps[0][K.P[name]]
+  const steps = Object.fromEntries(names.map(name => [name, Math.max(0.02, Math.abs(Ps[0][K.P[name]]) * 0.25)]))
+  let best = objective(looks, keys)
+  const job = (window.job = { tag, looks, it: 0, iters, start: best, best, done: false, t0: performance.now() })
+  for (let it = 0; it < iters; it += 1) {
+    for (const name of names) {
+      const i = K.P[name]
+      const v0 = Ps[0][i]
+      const [lo, hi] = limits[name] ?? [-1e9, 1e9]
+      let moved = false
+      for (const dir of [1, -1]) {
+        const v = Math.min(hi, Math.max(lo, v0 + dir * steps[name]))
+        if (v === v0) continue
+        for (const p of Ps) p[i] = v
+        const l = objective(looks, keys)
+        if (l < best - 1e-4) {
+          best = l
+          steps[name] *= 1.3
+          moved = true
+          break
+        }
+        for (const p of Ps) p[i] = v0
+      }
+      if (!moved) steps[name] *= 0.6
+      job.best = best
+      await new Promise(resolve => setTimeout(resolve))
+    }
+    job.it = it + 1
+  }
+  job.done = true
+  job.P = Object.fromEntries(names.map(name => [name, +Ps[0][K.P[name]].toFixed(4)]))
+  job.ms = Math.round(performance.now() - job.t0)
+  return job
+}
+
+function getP(look) {
+  const p = pOf(look)
+  return Object.fromEntries(Object.keys(K.P).map(name => [name, +p[K.P[name]].toFixed(4)]))
+}
+function setP(look, values) {
+  const p = pOf(look)
+  for (const name in values) p[K.P[name]] = values[name]
+}
+async function save(name, content) {
+  const response = await fetch(`/save?name=${name}`, { method: 'POST', body: content })
+  return response.text()
+}
+/** Keeps the numbers of every look touched (for apply-fits.mjs). */
+async function dump(name) {
+  return save(name, `data:application/json;base64,${btoa(JSON.stringify(Object.fromEntries(Object.keys(own).map(look => [look, getP(look)]))))}`)
+}
+/** Takes numbers back from a file `dump` made. */
+async function load(url) {
+  const all = await (await fetch(url)).json()
+  for (const look in all) setP(look, all[look])
+}
+
+// ------------------------------------------------------------------ looking
+
+function showDiff(img, ref) {
+  const ctx = document.getElementById('diff').getContext('2d')
+  const id = ctx.createImageData(N, N)
+  for (let i = 0; i < N * N; i += 1) {
+    for (let c = 0; c < 3; c += 1) {
+      id.data[i * 4 + c] = Math.min(255, Math.abs(over(ref[i * 4 + c], ref[i * 4 + 3], 120) - over(img[i * 4 + c], img[i * 4 + 3], 120)) * 4)
+    }
+    id.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(id, 0, 0)
+}
+
+function zoom(box = [80, 105, 160, 100]) {
+  const crop = (src, dst) => {
+    const ctx = document.getElementById(dst).getContext('2d')
+    ctx.imageSmoothingEnabled = false
+    ctx.fillStyle = '#777'
+    ctx.fillRect(0, 0, 480, 300)
+    ctx.drawImage(src, box[0], box[1], box[2], box[3], 0, 0, 480, 300)
+  }
+  crop(document.getElementById('refc'), 'zr')
+  crop(document.getElementById('gl'), 'zg')
+}
+
+const renderToCanvas = (look, key) => {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = N
+  const ctx = canvas.getContext('2d')
+  const id = ctx.createImageData(N, N)
+  id.data.set(refs[`${look}/${key}`])
+  ctx.putImageData(id, 0, 0)
+  return canvas
+}
+
+/** Draws one frame of a look beside its render; the loss it comes back with counts every pixel. */
+function show(look, key) {
+  const ref = refs[`${look}/${key}`]
+  document.getElementById('refc').getContext('2d').drawImage(renderToCanvas(look, key), 0, 0)
+  draw(look, key)
+  const img = readGL()
+  showDiff(img, ref)
+  return loss(img, ref, null)
+}
+
+/** Many frames of one look, each as a render and the live picture; a table of losses comes back. */
+async function sheet(look, name, keys = Object.keys(K.looks[look].frames)) {
+  await loadRefs(look, keys)
+  const S = 160
+  const cols = 5
+  const canvas = document.createElement('canvas')
+  canvas.width = cols * (2 * S + 6)
+  canvas.height = Math.ceil(keys.length / cols) * (S + 16)
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#2a2a2a'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  const losses = {}
+  keys.forEach((key, i) => {
+    losses[key] = +show(look, key).toFixed(1)
+    const ox = (i % cols) * (2 * S + 6)
+    const oy = Math.floor(i / cols) * (S + 16)
+    ctx.fillStyle = '#777'
+    ctx.fillRect(ox, oy + 16, S, S)
+    ctx.fillRect(ox + S + 3, oy + 16, S, S)
+    ctx.drawImage(renderToCanvas(look, key), ox, oy + 16, S, S)
+    ctx.drawImage(glc, ox + S + 3, oy + 16, S, S)
+    ctx.fillStyle = '#ddd'
+    ctx.font = '11px monospace'
+    ctx.fillText(`${key}  ${losses[key]}`, ox + 2, oy + 12)
+  })
+  return { losses, saved: await save(name, canvas.toDataURL('image/png')) }
+}
+
+/** Many looks at one moment, render and live picture side by side. */
+async function grid(looks, key, name, cols = 4) {
+  const S = 200
+  const canvas = document.createElement('canvas')
+  canvas.width = cols * (2 * S + 8)
+  canvas.height = Math.ceil(looks.length / cols) * (S + 16)
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#2a2a2a'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  const losses = {}
+  for (const [i, look] of looks.entries()) {
+    await loadRefs(look, [key])
+    losses[look] = +show(look, key).toFixed(1)
+    const ox = (i % cols) * (2 * S + 8)
+    const oy = Math.floor(i / cols) * (S + 16)
+    ctx.fillStyle = '#777'
+    ctx.fillRect(ox, oy + 16, S, S)
+    ctx.fillRect(ox + S + 3, oy + 16, S, S)
+    ctx.drawImage(renderToCanvas(look, key), ox, oy + 16, S, S)
+    ctx.drawImage(glc, ox + S + 3, oy + 16, S, S)
+    ctx.fillStyle = '#ddd'
+    ctx.font = '11px monospace'
+    ctx.fillText(`${look.replace('-none', '')}  ${losses[look]}`, ox + 2, oy + 12)
+  }
+  return { losses, saved: await save(name, canvas.toDataURL('image/png')) }
+}
+
+/** One frame of one look: render, live picture, difference, and a zoomed part of the first two. */
+async function snap(look, key, name, box) {
+  await loadRefs(look, [key])
+  const l = show(look, key)
+  zoom(box)
+  const canvas = document.createElement('canvas')
+  canvas.width = 3 * 320 + 16
+  canvas.height = 320 + 8 + 300
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#2a2a2a'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#777'
+  ctx.fillRect(0, 0, 320, 320)
+  ctx.fillRect(328, 0, 320, 320)
+  ctx.drawImage(document.getElementById('refc'), 0, 0)
+  ctx.drawImage(glc, 328, 0)
+  ctx.drawImage(document.getElementById('diff'), 656, 0)
+  ctx.drawImage(document.getElementById('zr'), 0, 328)
+  ctx.drawImage(document.getElementById('zg'), 488, 328)
+  return { loss: +l.toFixed(2), saved: await save(name, canvas.toDataURL('image/png')) }
+}
+
+window.NK = { K, fit, objective, loadRefs, getP, setP, dump, load, setMaskMode, show, sheet, grid, snap, zoom }
+out(`ready: ${Object.keys(K.looks).length} looks`)
+</script>
